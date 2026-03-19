@@ -11,7 +11,7 @@ set_property PACKAGE_PIN H14 [get_ports sw0]
 set_property IOSTANDARD LVCMOS33 [get_ports sw0]
 
 # Switch 1 - bank 15, LVCMOS33
-set_property PACKAGE_PIN J14 [get_ports sw1]
+set_property PACKAGE_PIN H18 [get_ports sw1]
 set_property IOSTANDARD LVCMOS33 [get_ports sw1]
 
 # LEDs - bank 15, LVCMOS33

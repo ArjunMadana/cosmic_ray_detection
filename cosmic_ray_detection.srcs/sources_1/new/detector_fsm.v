@@ -255,14 +255,18 @@ always @(posedge clk) begin
             end
 
             SETTLE: begin
-                // Drain in-flight AXI responses before re-entering FILL
+                // Wait for any in-flight AXI responses to drain
                 awvalid     <= 0;
                 wvalid      <= 0;
                 arvalid     <= 0;
-                addr        <= 0;
-                hit_counter <= 0;
-                state       <= FILL;
+                if (!bvalid && !rvalid) begin
+                    addr        <= 0;
+                    hit_counter <= 0;
+                    state       <= FILL;
+                end
             end
+end
+            
         endcase
     end
 end
