@@ -265,8 +265,6 @@ always @(posedge clk) begin
                     state       <= FILL;
                 end
             end
-end
-            
         endcase
     end
 end
