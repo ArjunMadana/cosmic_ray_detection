@@ -75,6 +75,7 @@ localparam FILL      = 3'd1;
 localparam HOLD      = 3'd2;
 localparam SCAN      = 3'd3;
 localparam REPORT    = 3'd4;
+localparam SETTLE    = 3'd5;
 
 localparam CYCLES_5S  = 64'd750_000_000;
 localparam CYCLES_10S = 64'd1_500_000_000;
@@ -151,11 +152,11 @@ always @(posedge clk) begin
                 if (awvalid && awready) awvalid <= 0;
                 if (wvalid  && wready)  wvalid  <= 0;
                 if (bvalid) begin
-                    if (addr >= MEM_SIZE - 1) begin
+                    if (addr >= MEM_SIZE - 4) begin
                         addr  <= 0;
                         state <= HOLD;
                     end else begin
-                        addr <= addr + 1;
+                        addr <= addr + 4;
                     end
                 end
             end
@@ -180,12 +181,12 @@ always @(posedge clk) begin
                 if (rvalid) begin
                     if (rdata != PATTERN)
                         hit_counter <= hit_counter + 1;
-                    if (addr >= MEM_SIZE - 1) begin
+                    if (addr >= MEM_SIZE - 4) begin
                         state        <= REPORT;
                         report_shift <= hit_counter;
                         report_idx   <= 0;
                     end else begin
-                        addr <= addr + 1;
+                        addr <= addr + 4;
                     end
                 end
             end
@@ -235,13 +236,21 @@ always @(posedge clk) begin
                     else if (report_idx == 13) uart_data <= 8'h0A;
                     else if (report_idx == 14) begin
                         uart_valid  <= 0;
-                        state       <= FILL;
-                        addr        <= 0;
-                        hit_counter <= 0;
+                        state       <= SETTLE;
                     end
                 end else begin
                     uart_valid <= 0;
                 end
+            end
+
+            SETTLE: begin
+                // Drain in-flight AXI responses before re-entering FILL
+                awvalid     <= 0;
+                wvalid      <= 0;
+                arvalid     <= 0;
+                addr        <= 0;
+                hit_counter <= 0;
+                state       <= FILL;
             end
         endcase
     end
