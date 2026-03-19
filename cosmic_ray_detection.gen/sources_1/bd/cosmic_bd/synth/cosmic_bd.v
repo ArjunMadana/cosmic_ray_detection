@@ -64,7 +64,8 @@ module cosmic_bd
     reset,
     reset_0,
     sys_clock,
-    ui_clk_0);
+    ui_clk_0,
+    ext_refresh_tick);
   (* X_INTERFACE_INFO = "xilinx.com:interface:ddrx:1.0 DDR3_0 ADDR" *) (* X_INTERFACE_PARAMETER = "XIL_INTERFACENAME DDR3_0, AXI_ARBITRATION_SCHEME TDM, BURST_LENGTH 8, CAN_DEBUG false, CAS_LATENCY 11, CAS_WRITE_LATENCY 11, CS_ENABLED true, DATA_MASK_ENABLED true, DATA_WIDTH 8, MEMORY_TYPE COMPONENTS, MEM_ADDR_MAP ROW_COLUMN_BANK, SLOT Single, TIMEPERIOD_PS 1250" *) output [13:0]DDR3_0_addr;
   (* X_INTERFACE_INFO = "xilinx.com:interface:ddrx:1.0 DDR3_0 BA" *) output [2:0]DDR3_0_ba;
   (* X_INTERFACE_INFO = "xilinx.com:interface:ddrx:1.0 DDR3_0 CAS_N" *) output DDR3_0_cas_n;
@@ -118,6 +119,7 @@ module cosmic_bd
   (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 RST.RESET_0 RST" *) (* X_INTERFACE_PARAMETER = "XIL_INTERFACENAME RST.RESET_0, INSERT_VIP 0, POLARITY ACTIVE_LOW" *) input reset_0;
   (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 CLK.SYS_CLOCK CLK" *) (* X_INTERFACE_PARAMETER = "XIL_INTERFACENAME CLK.SYS_CLOCK, CLK_DOMAIN cosmic_bd_sys_clock, FREQ_HZ 12000000, FREQ_TOLERANCE_HZ 0, INSERT_VIP 0, PHASE 0.0" *) input sys_clock;
   (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 CLK.UI_CLK_0 CLK" *) (* X_INTERFACE_PARAMETER = "XIL_INTERFACENAME CLK.UI_CLK_0, CLK_DOMAIN cosmic_bd_mig_7series_0_2_ui_clk, FREQ_HZ 166666667, FREQ_TOLERANCE_HZ 0, INSERT_VIP 0, PHASE 0" *) output ui_clk_0;
+  input ext_refresh_tick;
 
   wire [31:0]S00_AXI_0_1_ARADDR;
   wire [1:0]S00_AXI_0_1_ARBURST;
@@ -324,7 +326,8 @@ module cosmic_bd
         .s_axi_wvalid(smartconnect_0_M00_AXI_WVALID),
         .sys_clk_i(clk_wiz_0_clk_out1),
         .sys_rst(reset_0_1),
-        .ui_clk(mig_7series_0_ui_clk));
+        .ui_clk(mig_7series_0_ui_clk),
+        .ext_refresh_tick(ext_refresh_tick));
   cosmic_bd_reset_inv_0_0 reset_inv_0
        (.Op1(reset_1),
         .Res(reset_inv_0_Res));

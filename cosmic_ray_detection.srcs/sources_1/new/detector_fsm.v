@@ -26,6 +26,8 @@ module detector_fsm #(
     input  wire        rst,
     input  wire        calib_complete,
     input  wire        sw0,
+    input  wire        sw1,
+    output reg         refresh_tick_out,
 
     // AXI Write Address
     output reg  [27:0] awaddr,
@@ -70,6 +72,11 @@ module detector_fsm #(
     input wire         btn3
 );
 
+localparam REF_OFF    = 32'h0;
+localparam REF_SLOW   = 32'd15_000_000;  // ~100 ms at 150 MHz
+localparam REF_NORMAL = 32'd1_170;       // ~7.8 us (DDR3 spec)
+localparam REF_FAST   = 32'd585;         // ~3.9 us (2x normal rate)
+
 localparam WAIT_INIT = 3'd0;
 localparam FILL      = 3'd1;
 localparam HOLD      = 3'd2;
@@ -91,6 +98,10 @@ reg [63:0] hold_counter;
 reg [63:0] hold_cycles_sel;
 reg [1:0]  time_sel;     // 0=5s, 1=10s, 2=20s, 3=30s
 reg [3:0] btn_prev;  // previous button state for edge detection
+
+reg [31:0] refresh_counter;
+reg [31:0] refresh_period;
+reg [1:0]  refresh_sel;
 
 //localparam PATTERN = 32'hFFFFFFFF;
 localparam PATTERN = 32'h00000000;
@@ -253,6 +264,36 @@ always @(posedge clk) begin
                 state       <= FILL;
             end
         endcase
+    end
+end
+
+// Refresh tick generator — runs independently of FSM state
+always @(posedge clk) begin
+    if (rst) begin
+        refresh_counter  <= 0;
+        refresh_tick_out <= 0;
+        refresh_period   <= REF_OFF;
+        refresh_sel      <= 0;
+    end else begin
+        refresh_sel <= {sw1, sw0};
+        case (refresh_sel)
+            2'd0: refresh_period <= REF_OFF;
+            2'd1: refresh_period <= REF_SLOW;
+            2'd2: refresh_period <= REF_NORMAL;
+            2'd3: refresh_period <= REF_FAST;
+        endcase
+
+        refresh_tick_out <= 1'b0;  // default: single-cycle pulse
+        if (refresh_period != 0) begin
+            if (refresh_counter >= refresh_period) begin
+                refresh_counter  <= 0;
+                refresh_tick_out <= 1'b1;
+            end else begin
+                refresh_counter <= refresh_counter + 1;
+            end
+        end else begin
+            refresh_counter <= 0;
+        end
     end
 end
 

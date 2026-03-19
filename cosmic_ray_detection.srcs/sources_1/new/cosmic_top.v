@@ -23,7 +23,8 @@
         input  wire        sys_clock,
 //        input  wire        reset,
         input  wire        sw0,
-    
+        input  wire        sw1,
+
         // DDR3
         inout  wire [15:0] ddr3_dq,
         inout  wire [1:0]  ddr3_dqs_n,
@@ -89,6 +90,8 @@
 
     wire        fsm_rst;
     assign fsm_rst = !calib_complete;
+
+    wire        refresh_tick_out;
     
     // Block design instance
     cosmic_bd_wrapper u_bd (
@@ -135,7 +138,8 @@
         .S00_AXI_0_arlen    (8'b0),
         .S00_AXI_0_arsize   (3'b010),
         .S00_AXI_0_wlast    (1'b1),
-        .reset_0            (~reset)
+        .reset_0            (~reset),
+        .ext_refresh_tick   (refresh_tick_out)
     );
     
     // FSM
@@ -144,6 +148,8 @@
         .rst            (fsm_rst),
         .calib_complete (calib_complete),
         .sw0            (sw0),
+        .sw1            (sw1),
+        .refresh_tick_out (refresh_tick_out),
         .awaddr         (awaddr),
         .awvalid        (awvalid),
         .awready        (awready),
