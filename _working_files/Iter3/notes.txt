@@ -1,0 +1,3 @@
+3/6/2026 12:02 PM
+- Buttons are working
+- Next step is to connect 5 seconds to BTN0

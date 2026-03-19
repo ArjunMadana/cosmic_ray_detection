@@ -1,0 +1,5 @@
+3/6/2026 11:15 AM
+- These files work
+- Currently the FSM has a read range of 4000 addresses which is quite low
+- The 16M address line is commented out so be sure to change that
+- The next change I will make is so that it turns off the read with increasing N
