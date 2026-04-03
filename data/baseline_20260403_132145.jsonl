@@ -1,0 +1,25 @@
+{"type": "FLIP", "timestamp": "2026-04-03T18:21:47.139238+00:00", "ts_unix": 1775240507.1392384, "hold_s": 5, "flip_count": 3, "raw": "HOLD:05s FLIPS:00000003"}
+{"type": "FLIP", "timestamp": "2026-04-03T18:21:50.802782+00:00", "ts_unix": 1775240510.802782, "hold_s": 5, "flip_count": 0, "raw": "HOLD:05s FLIPS:00000000"}
+{"type": "FLIP", "timestamp": "2026-04-03T18:21:54.482663+00:00", "ts_unix": 1775240514.482663, "hold_s": 5, "flip_count": 0, "raw": "HOLD:05s FLIPS:00000000"}
+{"type": "INTERVAL", "timestamp": "2026-04-03T18:21:56.418622+00:00", "ts_unix": 1775240516.4186215, "hold_s": 20, "raw": "INTERVAL:20s"}
+{"type": "INTERVAL", "timestamp": "2026-04-03T18:21:56.578284+00:00", "ts_unix": 1775240516.578284, "hold_s": 20, "raw": "INTERVAL:20s"}
+{"type": "INTERVAL", "timestamp": "2026-04-03T18:22:02.401812+00:00", "ts_unix": 1775240522.4018116, "hold_s": 20, "raw": "INTERVAL:20s"}
+{"type": "INTERVAL", "timestamp": "2026-04-03T18:22:02.769855+00:00", "ts_unix": 1775240522.7698545, "hold_s": 20, "raw": "INTERVAL:20s"}
+{"type": "INTERVAL", "timestamp": "2026-04-03T18:22:03.249708+00:00", "ts_unix": 1775240523.2497082, "hold_s": 20, "raw": "INTERVAL:20s"}
+{"type": "INTERVAL", "timestamp": "2026-04-03T18:22:03.585835+00:00", "ts_unix": 1775240523.585835, "hold_s": 20, "raw": "INTERVAL:20s"}
+{"type": "INTERVAL", "timestamp": "2026-04-03T18:22:04.178112+00:00", "ts_unix": 1775240524.178112, "hold_s": 20, "raw": "INTERVAL:20s"}
+{"type": "FLIP", "timestamp": "2026-04-03T18:22:06.497673+00:00", "ts_unix": 1775240526.4976726, "hold_s": 20, "flip_count": 66, "raw": "HOLD:20s FLIPS:00000042"}
+{"type": "FLIP", "timestamp": "2026-04-03T18:22:18.497908+00:00", "ts_unix": 1775240538.4979079, "hold_s": 20, "flip_count": 68, "raw": "HOLD:20s FLIPS:00000044"}
+{"type": "FLIP", "timestamp": "2026-04-03T18:22:30.497386+00:00", "ts_unix": 1775240550.4973862, "hold_s": 20, "flip_count": 51, "raw": "HOLD:20s FLIPS:00000033"}
+{"type": "FLIP", "timestamp": "2026-04-03T18:22:42.512636+00:00", "ts_unix": 1775240562.5126357, "hold_s": 20, "flip_count": 49, "raw": "HOLD:20s FLIPS:00000031"}
+{"type": "FLIP", "timestamp": "2026-04-03T18:22:54.547571+00:00", "ts_unix": 1775240574.5475712, "hold_s": 20, "flip_count": 49, "raw": "HOLD:20s FLIPS:00000031"}
+{"type": "FLIP", "timestamp": "2026-04-03T18:23:06.511672+00:00", "ts_unix": 1775240586.511672, "hold_s": 20, "flip_count": 49, "raw": "HOLD:20s FLIPS:00000031"}
+{"type": "FLIP", "timestamp": "2026-04-03T18:23:18.527565+00:00", "ts_unix": 1775240598.5275652, "hold_s": 20, "flip_count": 50, "raw": "HOLD:20s FLIPS:00000032"}
+{"type": "FLIP", "timestamp": "2026-04-03T18:23:30.527097+00:00", "ts_unix": 1775240610.5270967, "hold_s": 20, "flip_count": 49, "raw": "HOLD:20s FLIPS:00000031"}
+{"type": "FLIP", "timestamp": "2026-04-03T18:23:42.526641+00:00", "ts_unix": 1775240622.5266411, "hold_s": 20, "flip_count": 50, "raw": "HOLD:20s FLIPS:00000032"}
+{"type": "FLIP", "timestamp": "2026-04-03T18:23:54.542088+00:00", "ts_unix": 1775240634.5420878, "hold_s": 20, "flip_count": 51, "raw": "HOLD:20s FLIPS:00000033"}
+{"type": "FLIP", "timestamp": "2026-04-03T18:24:06.547687+00:00", "ts_unix": 1775240646.5476868, "hold_s": 20, "flip_count": 50, "raw": "HOLD:20s FLIPS:00000032"}
+{"type": "FLIP", "timestamp": "2026-04-03T18:24:18.555765+00:00", "ts_unix": 1775240658.5557654, "hold_s": 20, "flip_count": 51, "raw": "HOLD:20s FLIPS:00000033"}
+{"type": "FLIP", "timestamp": "2026-04-03T18:24:30.556773+00:00", "ts_unix": 1775240670.556773, "hold_s": 20, "flip_count": 51, "raw": "HOLD:20s FLIPS:00000033"}
+{"type": "FLIP", "timestamp": "2026-04-03T18:24:42.556558+00:00", "ts_unix": 1775240682.556558, "hold_s": 20, "flip_count": 51, "raw": "HOLD:20s FLIPS:00000033"}
+{"type": "FLIP", "timestamp": "2026-04-03T18:24:54.556756+00:00", "ts_unix": 1775240694.556756, "hold_s": 20, "flip_count": 53, "raw": "HOLD:20s FLIPS:00000035"}
