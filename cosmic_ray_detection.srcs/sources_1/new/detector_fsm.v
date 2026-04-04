@@ -74,14 +74,15 @@ localparam REF_SLOW   = 32'd8_333_333;   // ~100 ms at 83.333 MHz
 localparam REF_NORMAL = 32'd650;         // ~7.8 us (DDR3 spec) at 83.333 MHz
 localparam REF_FAST   = 32'd325;         // ~3.9 us (2x normal rate) at 83.333 MHz
 
-localparam WAIT_INIT = 3'd0;
-localparam FILL      = 3'd1;
-localparam HOLD      = 3'd2;
-localparam SCAN      = 3'd3;
-localparam REPORT    = 3'd4;
-localparam SETTLE    = 3'd5;
-localparam PRINT_REF = 3'd6;
-localparam PRINT_INT = 3'd7;
+localparam WAIT_INIT  = 4'd0;
+localparam FILL       = 4'd1;
+localparam HOLD       = 4'd2;
+localparam SCAN       = 4'd3;
+localparam REPORT     = 4'd4;
+localparam SETTLE     = 4'd5;
+localparam PRINT_REF  = 4'd6;
+localparam PRINT_INT  = 4'd7;
+localparam PRINT_PAT  = 4'd8;
 
 localparam CYCLES_5S  = 64'd416_666_665;    // 5s  at 83.333 MHz
 localparam CYCLES_10S = 64'd833_333_330;    // 10s at 83.333 MHz
@@ -90,10 +91,15 @@ localparam CYCLES_30S = 64'd2_499_999_990;  // 30s at 83.333 MHz
 
 localparam CLK_PER_SEC = 64'd150_000_000;   // ui_clk frequency (matches uart_tx CLK_FREQ)
 
-localparam PATTERN = 32'hFFFFFFFF;
-//localparam PATTERN = 32'h00000000;
+// pattern_sel: 0=0xFFFFFFFF, 1=0x00000000, 2=0x55555555, 3=0xAAAAAAAA
+reg [1:0] pattern_sel;
+wire [31:0] active_pattern;
+assign active_pattern = (pattern_sel == 2'd0) ? 32'hFFFFFFFF :
+                        (pattern_sel == 2'd1) ? 32'h00000000 :
+                        (pattern_sel == 2'd2) ? 32'h55555555 :
+                                                32'hAAAAAAAA;
 
-reg [2:0]  state;
+reg [4:0]  state;
 reg [27:0] addr;
 reg [31:0] hit_counter;
 reg [31:0] report_shift;
@@ -117,8 +123,11 @@ reg        sw_changed;
 reg [1:0]  sw_print_val;
 
 // UART RX command parser state
-reg        cmd_active;   // currently inside an 'H...' command
-reg [15:0] cmd_acc;      // accumulates decimal digit value
+reg        cmd_active;    // currently inside an 'H...' command
+reg [15:0] cmd_acc;       // accumulates decimal digit value
+
+reg        pcmd_active;   // currently inside a 'P...' command
+reg        pat_changed;   // triggers PRINT_PAT confirmation state
 
 // Combinational BCD breakdown of hold_sec_val for printing
 wire [3:0] dig3 = hold_sec_val / 1000;
@@ -149,6 +158,9 @@ always @(posedge clk) begin
         btn_changed     <= 0;
         cmd_active      <= 0;
         cmd_acc         <= 0;
+        pcmd_active     <= 0;
+        pat_changed     <= 0;
+        pattern_sel     <= 2'd0;
     end else begin
         led0 <= calib_complete;
         led1 <= (state != WAIT_INIT);
@@ -201,6 +213,22 @@ always @(posedge clk) begin
         end
 
         // ----------------------------------------------------------------
+        // UART RX pattern command — "P<0-3>\n"
+        // ----------------------------------------------------------------
+        if (rx_valid) begin
+            if (rx_data == "P") begin
+                pcmd_active <= 1;
+            end else if (pcmd_active && rx_data >= "0" && rx_data <= "3") begin
+                pattern_sel <= rx_data[1:0];
+            end else if (pcmd_active && rx_data == 8'h0A) begin  // '\n'
+                pcmd_active <= 0;
+                pat_changed <= 1;
+            end else if (rx_data != 8'h0D) begin
+                pcmd_active <= 0;
+            end
+        end
+
+        // ----------------------------------------------------------------
         // Switch change detection — works in any state
         // ----------------------------------------------------------------
         sw_prev <= {sw1, sw0};
@@ -224,7 +252,7 @@ always @(posedge clk) begin
                 if (!awvalid && !wvalid && !bvalid) begin
                     awaddr  <= addr;
                     awvalid <= 1;
-                    wdata   <= PATTERN;
+                    wdata   <= active_pattern;
                     wstrb   <= 4'hF;
                     wvalid  <= 1;
                 end
@@ -249,6 +277,10 @@ always @(posedge clk) begin
                     sw_changed <= 0;
                     report_idx <= 0;
                     state      <= PRINT_REF;
+                end else if (pat_changed) begin
+                    pat_changed <= 0;
+                    report_idx  <= 0;
+                    state       <= PRINT_PAT;
                 end else if (hold_counter >= hold_cycles_sel) begin
                     state        <= SCAN;
                     addr         <= 0;
@@ -266,7 +298,7 @@ always @(posedge clk) begin
                 end
                 if (arvalid && arready) arvalid <= 0;
                 if (rvalid) begin
-                    if (rdata != PATTERN)
+                    if (rdata != active_pattern)
                         hit_counter <= hit_counter + 1;
                     if (addr >= MEM_SIZE - 4) begin
                         state        <= REPORT;
@@ -278,13 +310,14 @@ always @(posedge clk) begin
                 end
             end
 
-            // Output format: "HOLD:NNNNs FLIPS:XXXXXXXX\r\n"  (27 bytes)
+            // Output format: "HOLD:NNNNs PAT:XX FLIPS:XXXXXXXX\r\n"  (33 bytes)
             // NNNN = 4-digit zero-padded decimal hold time in seconds
+            // XX   = pattern label: FF, 00, 55, AA
             REPORT: begin
                 if (uart_ready && !uart_valid) begin
                     report_idx <= report_idx + 1;
 
-                    if (report_idx < 27)
+                    if (report_idx < 33)
                         uart_valid <= 1;
 
                     if      (report_idx == 0)  uart_data <= "H";
@@ -298,13 +331,35 @@ always @(posedge clk) begin
                     else if (report_idx == 8)  uart_data <= "0" + {4'd0, dig0};
                     else if (report_idx == 9)  uart_data <= "s";
                     else if (report_idx == 10) uart_data <= " ";
-                    else if (report_idx == 11) uart_data <= "F";
-                    else if (report_idx == 12) uart_data <= "L";
-                    else if (report_idx == 13) uart_data <= "I";
-                    else if (report_idx == 14) uart_data <= "P";
-                    else if (report_idx == 15) uart_data <= "S";
-                    else if (report_idx == 16) uart_data <= ":";
-                    else if (report_idx <= 24) begin  // idx 17-24: 8 hex digits
+                    else if (report_idx == 11) uart_data <= "P";
+                    else if (report_idx == 12) uart_data <= "A";
+                    else if (report_idx == 13) uart_data <= "T";
+                    else if (report_idx == 14) uart_data <= ":";
+                    // idx 15-16: two ASCII hex chars for pattern label
+                    else if (report_idx == 15) begin
+                        case (pattern_sel)
+                            2'd0: uart_data <= "F";
+                            2'd1: uart_data <= "0";
+                            2'd2: uart_data <= "5";
+                            2'd3: uart_data <= "A";
+                        endcase
+                    end
+                    else if (report_idx == 16) begin
+                        case (pattern_sel)
+                            2'd0: uart_data <= "F";
+                            2'd1: uart_data <= "0";
+                            2'd2: uart_data <= "5";
+                            2'd3: uart_data <= "A";
+                        endcase
+                    end
+                    else if (report_idx == 17) uart_data <= " ";
+                    else if (report_idx == 18) uart_data <= "F";
+                    else if (report_idx == 19) uart_data <= "L";
+                    else if (report_idx == 20) uart_data <= "I";
+                    else if (report_idx == 21) uart_data <= "P";
+                    else if (report_idx == 22) uart_data <= "S";
+                    else if (report_idx == 23) uart_data <= ":";
+                    else if (report_idx <= 31) begin  // idx 24-31: 8 hex digits
                         case (report_shift[31:28])
                             4'h0: uart_data <= "0"; 4'h1: uart_data <= "1";
                             4'h2: uart_data <= "2"; 4'h3: uart_data <= "3";
@@ -317,9 +372,12 @@ always @(posedge clk) begin
                         endcase
                         report_shift <= {report_shift[27:0], 4'b0};
                     end
-                    else if (report_idx == 25) uart_data <= 8'h0D;
-                    else if (report_idx == 26) uart_data <= 8'h0A;
-                    else if (report_idx == 27) begin
+                    else if (report_idx == 32) uart_data <= 8'h0D;
+                    else if (report_idx == 33) begin
+                        uart_data  <= 8'h0A;
+                        uart_valid <= 1;
+                    end
+                    else if (report_idx == 34) begin
                         uart_valid <= 0;
                         state      <= SETTLE;
                     end
@@ -423,6 +481,50 @@ always @(posedge clk) begin
                     else if (report_idx == 14) uart_data <= 8'h0D;
                     else if (report_idx == 15) uart_data <= 8'h0A;
                     else if (report_idx == 16) begin
+                        uart_valid <= 0;
+                        state      <= HOLD;
+                    end
+                end else begin
+                    uart_valid <= 0;
+                end
+            end
+
+            // Output format: "PATTERN:XX\r\n"  (12 bytes)
+            // XX = FF, 00, 55, AA
+            PRINT_PAT: begin
+                if (uart_ready && !uart_valid) begin
+                    report_idx <= report_idx + 1;
+
+                    if (report_idx < 12)
+                        uart_valid <= 1;
+
+                    if      (report_idx == 0)  uart_data <= "P";
+                    else if (report_idx == 1)  uart_data <= "A";
+                    else if (report_idx == 2)  uart_data <= "T";
+                    else if (report_idx == 3)  uart_data <= "T";
+                    else if (report_idx == 4)  uart_data <= "E";
+                    else if (report_idx == 5)  uart_data <= "R";
+                    else if (report_idx == 6)  uart_data <= "N";
+                    else if (report_idx == 7)  uart_data <= ":";
+                    else if (report_idx == 8) begin
+                        case (pattern_sel)
+                            2'd0: uart_data <= "F";
+                            2'd1: uart_data <= "0";
+                            2'd2: uart_data <= "5";
+                            2'd3: uart_data <= "A";
+                        endcase
+                    end
+                    else if (report_idx == 9) begin
+                        case (pattern_sel)
+                            2'd0: uart_data <= "F";
+                            2'd1: uart_data <= "0";
+                            2'd2: uart_data <= "5";
+                            2'd3: uart_data <= "A";
+                        endcase
+                    end
+                    else if (report_idx == 10) uart_data <= 8'h0D;
+                    else if (report_idx == 11) uart_data <= 8'h0A;
+                    else if (report_idx == 12) begin
                         uart_valid <= 0;
                         state      <= HOLD;
                     end

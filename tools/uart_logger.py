@@ -38,13 +38,16 @@ except ImportError:
 # Constants
 # ---------------------------------------------------------------------------
 
-FLIP_RE    = re.compile(r'HOLD:(\d+)s FLIPS:([0-9A-Fa-f]{8})')
+FLIP_RE    = re.compile(r'HOLD:(\d+)s PAT:([0-9A-Fa-f]{2}) FLIPS:([0-9A-Fa-f]{8})')
 REFRESH_RE = re.compile(r'REFRESH:(OFF|SLOW|NORM|FAST)')
 INTV_RE    = re.compile(r'INTERVAL:(\d+)s')
+PATTERN_RE = re.compile(r'PATTERN:(FF|00|55|AA)')
 
-HOLD_COLORS = {5: '#4CAF50', 10: '#2196F3', 20: '#FF9800', 30: '#F44336'}
+HOLD_COLORS = {5: '#4CAF50', 10: '#2196F3', 20: '#FF9800', 30: '#F44736'}
 REFRESH_LABEL = {'OFF': 'Refresh OFF', 'SLOW': 'Slow (~100ms)',
                  'NORM': 'Normal (~7.8µs)', 'FAST': 'Fast (~3.9µs)'}
+PATTERN_LABEL = {'FF': '0xFFFFFFFF', '00': '0x00000000',
+                 '55': '0x55555555', 'AA': '0xAAAAAAAA'}
 
 # ---------------------------------------------------------------------------
 # Serial reader thread
@@ -100,7 +103,8 @@ def parse_line(raw_bytes, ts_unix):
     m = FLIP_RE.search(line)
     if m:
         return {'type': 'FLIP', 'timestamp': ts, 'ts_unix': ts_unix,
-                'hold_s': int(m.group(1)), 'flip_count': int(m.group(2), 16), 'raw': line}
+                'hold_s': int(m.group(1)), 'pattern': m.group(2).upper(),
+                'flip_count': int(m.group(3), 16), 'raw': line}
     m = REFRESH_RE.search(line)
     if m:
         return {'type': 'REFRESH', 'timestamp': ts, 'ts_unix': ts_unix,
@@ -109,6 +113,10 @@ def parse_line(raw_bytes, ts_unix):
     if m:
         return {'type': 'INTERVAL', 'timestamp': ts, 'ts_unix': ts_unix,
                 'hold_s': int(m.group(1)), 'raw': line}
+    m = PATTERN_RE.search(line)
+    if m:
+        return {'type': 'PATTERN', 'timestamp': ts, 'ts_unix': ts_unix,
+                'pattern': m.group(1).upper(), 'raw': line}
     return None
 
 # ---------------------------------------------------------------------------
@@ -116,7 +124,7 @@ def parse_line(raw_bytes, ts_unix):
 # ---------------------------------------------------------------------------
 
 class DataStore:
-    CSV_FIELDS = ['timestamp', 'iteration', 'hold_s', 'refresh_rate', 'flip_count', 'experiment']
+    CSV_FIELDS = ['timestamp', 'iteration', 'hold_s', 'refresh_rate', 'pattern', 'flip_count', 'experiment']
 
     def __init__(self, output_dir, name, description, start_time_iso):
         self.name = name
@@ -124,6 +132,7 @@ class DataStore:
         self.records = []       # FLIP rows (include ts_unix for plotting)
         self.notes   = []       # NOTE records
         self.refresh_rate = 'OFF'
+        self.pattern      = 'FF'
         self.iteration = 0
 
         Path(output_dir).mkdir(parents=True, exist_ok=True)
@@ -147,6 +156,9 @@ class DataStore:
         if record['type'] == 'REFRESH':
             self.refresh_rate = record['refresh_rate']
             return False
+        if record['type'] == 'PATTERN':
+            self.pattern = record['pattern']
+            return False
         if record['type'] == 'FLIP':
             self.iteration += 1
             row = {
@@ -155,6 +167,7 @@ class DataStore:
                 'iteration':    self.iteration,
                 'hold_s':       record['hold_s'],
                 'refresh_rate': self.refresh_rate,
+                'pattern':      record.get('pattern', self.pattern),
                 'flip_count':   record['flip_count'],
                 'experiment':   self.name,
             }
@@ -229,6 +242,7 @@ class DosimeterApp:
         self._alert      = None
         self._window     = 200
         self._ref_events = []   # (ts_unix, label) for vertical lines on plot
+        self._pat_events = []   # (ts_unix, label) for pattern-change markers
         self._connected  = False
 
         self._build_ui()
@@ -323,7 +337,16 @@ class DosimeterApp:
         hold_e = ttk.Entry(ctrl, textvariable=self._hold_var, width=6)
         hold_e.pack(side='left', padx=(2, 0))
         hold_e.bind('<Return>', lambda _: self._send_hold())
-        ttk.Button(ctrl, text='Send to board', command=self._send_hold).pack(side='left', padx=(2, 14))
+        ttk.Button(ctrl, text='Send', command=self._send_hold).pack(side='left', padx=(2, 14))
+
+        # Pattern selector
+        ttk.Separator(ctrl, orient='vertical').pack(side='left', fill='y', padx=6)
+        ttk.Label(ctrl, text='Pattern:').pack(side='left')
+        self._pattern_var = tk.StringVar(value='0xFFFFFFFF')
+        pat_cb = ttk.Combobox(ctrl, textvariable=self._pattern_var, width=12, state='readonly',
+                              values=['0xFFFFFFFF', '0x00000000', '0x55555555', '0xAAAAAAAA'])
+        pat_cb.pack(side='left', padx=(2, 0))
+        ttk.Button(ctrl, text='Send', command=self._send_pattern).pack(side='left', padx=(2, 14))
 
         # Alert threshold
         ttk.Label(ctrl, text='Alert if flips >').pack(side='left')
@@ -431,6 +454,7 @@ class DosimeterApp:
             name=name, description=desc,
             start_time_iso=datetime.now(tz=timezone.utc).isoformat())
         self._ref_events.clear()
+        self._pat_events.clear()
         self._hang = HangDetector()
         self._stop  = threading.Event()
         self._q     = queue.Queue()
@@ -489,6 +513,11 @@ class DosimeterApp:
             label = REFRESH_LABEL.get(record['refresh_rate'], record['refresh_rate'])
             self._ref_events.append((record['ts_unix'], label))
             self._log_append(f"Refresh rate → {record['refresh_rate']}", 'refresh')
+
+        elif record['type'] == 'PATTERN':
+            label = PATTERN_LABEL.get(record['pattern'], record['pattern'])
+            self._pat_events.append((record['ts_unix'], label))
+            self._log_append(f"Pattern → {label}", 'interval')
 
         elif record['type'] == 'INTERVAL':
             self._log_append(f"Hold interval → {record['hold_s']} s", 'interval')
@@ -557,6 +586,14 @@ class DosimeterApp:
                 ax.text(rx, ymax * 0.95, label, fontsize=7, color='#C586C0',
                         rotation=90, va='top')
 
+        # Pattern-change markers (green)
+        for ts_u, label in self._pat_events:
+            px = ts_u - start
+            if px >= x_min:
+                ax.axvline(px, color='#4EC9B0', linestyle='-.', linewidth=1.2, alpha=0.8)
+                ax.text(px, ymax * 0.75, label, fontsize=7, color='#4EC9B0',
+                        rotation=90, va='top')
+
         # Note markers
         for note in self._store.notes:
             nx = note['ts_unix'] - start
@@ -606,6 +643,21 @@ class DosimeterApp:
             self._log_append('⚠ Not connected', 'alert')
         self._hold_var.set('')
 
+    def _send_pattern(self):
+        val = self._pattern_var.get()
+        idx = {'0xFFFFFFFF': '0', '0x00000000': '1',
+               '0x55555555': '2', '0xAAAAAAAA': '3'}.get(val)
+        if idx is None:
+            return
+        if self._reader:
+            cmd = f'P{idx}\n'.encode('ascii')
+            if self._reader.write(cmd):
+                self._log_append(f'→ Sent pattern = {val} to board', 'interval')
+            else:
+                self._log_append('⚠ Not connected — command not sent', 'alert')
+        else:
+            self._log_append('⚠ Not connected', 'alert')
+
     def _set_alert(self):
         val = self._alert_var.get().strip()
         if not val:
@@ -651,6 +703,7 @@ class DosimeterApp:
             description='replay',
             start_time_iso=datetime.now(tz=timezone.utc).isoformat())
         self._ref_events.clear()
+        self._pat_events.clear()
         self._log_append(f'Replaying {path}', 'status')
 
         try:
@@ -673,6 +726,10 @@ class DosimeterApp:
                     elif record.get('type') == 'REFRESH':
                         label = REFRESH_LABEL.get(record.get('refresh_rate', ''), '')
                         self._ref_events.append((record['ts_unix'], label))
+                        self._store.ingest(record)
+                    elif record.get('type') == 'PATTERN':
+                        label = PATTERN_LABEL.get(record.get('pattern', ''), '')
+                        self._pat_events.append((record['ts_unix'], label))
                         self._store.ingest(record)
                     else:
                         self._store.ingest(record)
