@@ -1,0 +1,5 @@
+# experiment: Orientation_test_2
+# description: Trying orientation again with longer hold time
+# start_time: 2026-04-04T17:11:09.062320+00:00
+timestamp,iteration,hold_s,refresh_rate,flip_count,experiment
+2026-04-04T17:12:33.528126+00:00,1,120,OFF,42745,Orientation_test_2

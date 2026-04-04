@@ -1,0 +1,16 @@
+{"type": "INTERVAL", "timestamp": "2026-04-04T17:14:31.491573+00:00", "ts_unix": 1775322871.491573, "hold_s": 120, "raw": "INTERVAL:0120s"}
+{"type": "FLIP", "timestamp": "2026-04-04T17:14:34.422703+00:00", "ts_unix": 1775322874.422703, "hold_s": 120, "flip_count": 42671, "raw": "HOLD:0120s FLIPS:0000A6AF"}
+{"type": "NOTE", "timestamp": "2026-04-04T17:15:20.616294+00:00", "ts_unix": 1775322920.6162944, "text": "DRAM temp 95.3F"}
+{"type": "FLIP", "timestamp": "2026-04-04T17:16:35.313770+00:00", "ts_unix": 1775322995.3137698, "hold_s": 120, "flip_count": 42712, "raw": "HOLD:0120s FLIPS:0000A6D8"}
+{"type": "FLIP", "timestamp": "2026-04-04T17:18:36.203343+00:00", "ts_unix": 1775323116.2033427, "hold_s": 120, "flip_count": 42675, "raw": "HOLD:0120s FLIPS:0000A6B3"}
+{"type": "FLIP", "timestamp": "2026-04-04T17:20:37.103859+00:00", "ts_unix": 1775323237.103859, "hold_s": 120, "flip_count": 42646, "raw": "HOLD:0120s FLIPS:0000A696"}
+{"type": "NOTE", "timestamp": "2026-04-04T17:22:28.722704+00:00", "ts_unix": 1775323348.722704, "text": "DRAM temp 96F"}
+{"type": "FLIP", "timestamp": "2026-04-04T17:22:38.001719+00:00", "ts_unix": 1775323358.0017185, "hold_s": 120, "flip_count": 42617, "raw": "HOLD:0120s FLIPS:0000A679"}
+{"type": "FLIP", "timestamp": "2026-04-04T17:24:38.894065+00:00", "ts_unix": 1775323478.8940647, "hold_s": 120, "flip_count": 42456, "raw": "HOLD:0120s FLIPS:0000A5D8"}
+{"type": "NOTE", "timestamp": "2026-04-04T17:26:04.312107+00:00", "ts_unix": 1775323564.312107, "text": "DRAM temp 95.9F"}
+{"type": "FLIP", "timestamp": "2026-04-04T17:26:39.786772+00:00", "ts_unix": 1775323599.7867725, "hold_s": 120, "flip_count": 41936, "raw": "HOLD:0120s FLIPS:0000A3D0"}
+{"type": "FLIP", "timestamp": "2026-04-04T17:28:40.676652+00:00", "ts_unix": 1775323720.6766524, "hold_s": 120, "flip_count": 41979, "raw": "HOLD:0120s FLIPS:0000A3FB"}
+{"type": "FLIP", "timestamp": "2026-04-04T17:30:41.569557+00:00", "ts_unix": 1775323841.569557, "hold_s": 120, "flip_count": 41900, "raw": "HOLD:0120s FLIPS:0000A3AC"}
+{"type": "NOTE", "timestamp": "2026-04-04T17:31:00.471483+00:00", "ts_unix": 1775323860.471483, "text": "Turned sideways"}
+{"type": "NOTE", "timestamp": "2026-04-04T17:31:30.997282+00:00", "ts_unix": 1775323890.997282, "text": "DRAM temp abt 95F"}
+{"type": "FLIP", "timestamp": "2026-04-04T17:32:42.455051+00:00", "ts_unix": 1775323962.4550507, "hold_s": 120, "flip_count": 41964, "raw": "HOLD:0120s FLIPS:0000A3EC"}

@@ -1,6 +1,6 @@
-# DRAM Dosimeter — UART Logger & Live Plotter
+# DRAM Dosimeter — GUI Logger & Live Plotter
 
-Reads the Arty S7-25 UART output, plots bit-flip counts in real time, and saves every session to CSV and JSONL.
+Tkinter GUI that reads the Arty S7-25 UART output, plots bit-flip counts live, and saves every session to CSV and JSONL.  No CLI arguments needed for normal use.
 
 ---
 
@@ -8,141 +8,105 @@ Reads the Arty S7-25 UART output, plots bit-flip counts in real time, and saves 
 
 ```bash
 pip install pyserial matplotlib
-# or using the requirements file:
+# or:
 pip install -r tools/requirements.txt
 ```
 
 ---
 
-## Quick start
+## Usage
 
 ```bash
-# Live capture from board (prompted for name & description)
+# Open the GUI (normal use)
 python tools/uart_logger.py
 
-# With CLI flags (no prompts)
-python tools/uart_logger.py --port COM3 --name baseline --description "Room temp, refresh OFF"
-
-# Replay a previous session (no board needed)
+# Replay a saved session without hardware
 python tools/uart_logger.py --replay data/baseline_20260403_142200.jsonl
 ```
 
 ---
 
-## All options
+## GUI layout
 
-| Flag | Default | Description |
-|---|---|---|
-| `--port` | `COM3` | Serial port the board is connected to |
-| `--baud` | `115200` | Baud rate (matches FPGA firmware) |
-| `--name` | *(prompted)* | Short experiment name (spaces → underscores) |
-| `--description` | *(prompted)* | Free-text description stored in file header |
-| `--output-dir` | `data/` | Directory for saved files |
-| `--window` | `200` | Number of recent points shown in the rolling plot |
-| `--alert-threshold N` | off | Print a WARNING when `flip_count > N` |
-| `--ymax N` | auto | Pin the Y-axis maximum (useful for comparing sessions) |
-| `--replay FILE` | — | Re-plot a `.jsonl` file without hardware |
+```
+┌─ Connection ──────────────────────────────────────────────────┐
+│ Port [COM3 ▼] [↺]  Baud [115200]  [Connect] [Disconnect]     │
+│ Output dir [data/] […]                                        │
+├─ Experiment ──────────────────────────────────────────────────┤
+│ Name [baseline          ]  Description [Room temp, OFF      ] │
+├─ Live plot ───────────────────────────────────────────────────┤
+│                                                               │
+│    flip count vs elapsed time (scatter + line)                │
+│    color = hold time  |  vertical lines = refresh changes     │
+│    yellow dashed lines = your notes                           │
+│                                                               │
+├─ Status bar ──────────────────────────────────────────────────┤
+│ Iter: 12  Flips: 529,417  Hold: 5 s  Refresh: OFF  Elapsed:… │
+├─ Controls ────────────────────────────────────────────────────┤
+│ Hold time (s): [____] [Send to board]                         │
+│ Alert if flips > [______] [Set]   Plot last [200] points [Set]│
+├─ Annotation / Note ───────────────────────────────────────────┤
+│ [________________________________________] [Add Note]          │
+├─ Log ─────────────────────────────────────────────────────────┤
+│ 14:22:05  #   1  flips=   529,417  hold=5s  refresh=OFF       │
+│ 14:22:10  [NOTE] Started warming memory                       │
+│ ...                                                           │
+└───────────────────────────────────────────────────────────────┘
+```
 
-`--port` and `--replay` are mutually exclusive.
+---
+
+## Workflow
+
+1. **Launch** — `python tools/uart_logger.py`
+2. **Fill in** Name and Description (stored in the file header)
+3. **Select port** from the dropdown (click ↺ to refresh the list)
+4. **Connect** — the board starts being logged immediately
+5. **Change hold time** — type a number (1–9999 s) in *Hold time* and press Enter or click *Send to board*.  The board echoes `INTERVAL:NNNNs` to confirm.
+6. **Add notes** — type anything in the Annotation box and press Enter.  Notes get a timestamp and appear as yellow dashed lines on the plot and in the JSONL file.  Useful for recording: "tilted board 45°", "started heating lamp", "changed refresh rate", etc.
+7. **Disconnect** — saves files and prints a session summary in the log.
 
 ---
 
 ## Output files
 
-Both files are written to `--output-dir` (default `data/`) with the pattern `{name}_{YYYYMMDD_HHMMSS}.*`.
+Both files are written to *Output dir* (default `data/`) named `{name}_{YYYYMMDD_HHMMSS}.*`.
 
-### CSV (`.csv`)
-
-Human-readable, one row per SCAN cycle.
+### CSV  
+One row per SCAN cycle.  First three lines are `#`-prefixed metadata (loadable with `pd.read_csv(..., comment='#')`).
 
 ```
 # experiment: baseline
 # description: Room temp, refresh OFF
 # start_time: 2026-04-03T14:22:00+00:00
 timestamp,iteration,hold_s,refresh_rate,flip_count,experiment
-2026-04-03T14:22:10+00:00,1,5,OFF,2748,baseline
-2026-04-03T14:22:16+00:00,2,5,OFF,2751,baseline
-...
 ```
 
-Fields:
-- `timestamp` — ISO-8601 UTC wall-clock time the message arrived
-- `iteration` — sequential scan cycle number
-- `hold_s` — hold duration selected on board (5 / 10 / 20 / 30)
-- `refresh_rate` — DRAM refresh setting active at time of scan (OFF / SLOW / NORM / FAST)
-- `flip_count` — number of bit mismatches found in the 16 MB scan
-
-### JSONL (`.jsonl`)
-
-Lossless — every parsed message (FLIP, REFRESH, INTERVAL) is stored. Used by `--replay`.
+### JSONL  
+Every event (FLIP, REFRESH, INTERVAL, NOTE) in order.  Used by `--replay` to reconstruct the full session including notes.
 
 ---
 
-## Live plot features
+## Changing hold time from the GUI
 
-- **Scatter plot** colored by hold time (green=5s, blue=10s, orange=20s, red=30s)
-- **Rolling window** of the last `--window` points (default 200)
-- **Refresh-rate change markers** — vertical dashed lines annotated with the new rate
-- **Alert threshold line** — horizontal red dashed line when `--alert-threshold` is set
-- **Stats sidebar** — live mean, std-dev, min, max of the visible window
-- **Title bar** — shows current iteration count and active refresh rate
+Type seconds in the *Hold time* field, press Enter.  The board responds with `INTERVAL:NNNNs` (visible in the log) then uses that hold time from the next cycle onward.  Buttons on the board still work as a fallback.
 
 ---
 
-## Hang detection
+## Alert threshold
 
-If no FLIP message arrives within `2.5 × hold_time + 60 s`, a warning is printed:
-
-```
-[WARN] No FLIP message in 375s (expected ~5s hold). Board may be hung.
-```
-
-This matches the known FSM hang bug where the board stops printing after ~14–30 iterations.
-
----
-
-## Workflow example
-
-```bash
-# 1. Start a named session
-python tools/uart_logger.py --port COM3 --name cosmic_test_01 \
-    --description "SW0=0 SW1=0 (refresh OFF), 5s hold, 20°C ambient"
-
-# 2. Change switches/buttons on board; logger tracks REFRESH and INTERVAL messages automatically.
-
-# 3. Ctrl-C when done — summary printed, files saved.
-
-# 4. Later, re-examine:
-python tools/uart_logger.py --replay data/cosmic_test_01_20260403_142200.jsonl
-```
-
----
-
-## Changing hold time from the laptop
-
-While the logger is running, type a number of seconds and press Enter:
-
-```
-45
-[cmd] Sent H45 — board will confirm with INTERVAL:0045s
-```
-
-The board responds with `INTERVAL:0045s` confirming the change, then uses the new hold time from the next cycle onward.  Range: **1–9999 seconds**.  Physical buttons still work as a fallback and override any laptop-set value.
+Set *Alert if flips >* N. Any FLIP record above the threshold is highlighted red in the log and shown as a horizontal dashed line on the plot.
 
 ---
 
 ## UART message reference
 
-Messages the FPGA sends (firmware: `detector_fsm.v`):
-
 | Message | Example | Trigger |
 |---|---|---|
 | FLIP result | `HOLD:0005s FLIPS:00000ABC` | End of every SCAN cycle |
 | Refresh change | `REFRESH:OFF` / `SLOW` / `NORM` / `FAST` | SW0/SW1 toggled |
-| Interval change | `INTERVAL:0045s` | Button pressed or laptop command |
+| Interval change | `INTERVAL:0060s` | Button pressed or GUI command |
 
-Messages the laptop sends (firmware: `uart_rx.v` + `detector_fsm.v`):
-
-| Message | Example | Effect |
+| Command (laptop → board) | Example | Effect |
 |---|---|---|
-| Hold time command | `H45\n` | Sets hold to 45 s |
+| Hold time | `H60\n` | Sets hold to 60 s |

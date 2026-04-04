@@ -1,0 +1,14 @@
+# experiment: Orientation_test_3
+# description: Fixed logging errors so trying orientation again. 120s intervals.
+# start_time: 2026-04-04T17:14:28.409003+00:00
+timestamp,iteration,hold_s,refresh_rate,flip_count,experiment
+2026-04-04T17:14:34.422703+00:00,1,120,OFF,42671,Orientation_test_3
+2026-04-04T17:16:35.313770+00:00,2,120,OFF,42712,Orientation_test_3
+2026-04-04T17:18:36.203343+00:00,3,120,OFF,42675,Orientation_test_3
+2026-04-04T17:20:37.103859+00:00,4,120,OFF,42646,Orientation_test_3
+2026-04-04T17:22:38.001719+00:00,5,120,OFF,42617,Orientation_test_3
+2026-04-04T17:24:38.894065+00:00,6,120,OFF,42456,Orientation_test_3
+2026-04-04T17:26:39.786772+00:00,7,120,OFF,41936,Orientation_test_3
+2026-04-04T17:28:40.676652+00:00,8,120,OFF,41979,Orientation_test_3
+2026-04-04T17:30:41.569557+00:00,9,120,OFF,41900,Orientation_test_3
+2026-04-04T17:32:42.455051+00:00,10,120,OFF,41964,Orientation_test_3

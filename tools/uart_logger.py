@@ -1,18 +1,15 @@
 """
-uart_logger.py — DRAM Dosimeter UART Data Logger & Live Plotter
+uart_logger.py — DRAM Dosimeter GUI Logger & Live Plotter
 
-Reads structured UART output from the Arty S7-25 cosmic ray detector,
-parses flip-count records, saves to CSV/JSONL, and plots live.
-
+Tkinter GUI: no CLI arguments needed for normal use.
 Usage:
-    python uart_logger.py --port COM3 --name "baseline" --description "Room temp test"
-    python uart_logger.py --replay data/baseline_20260403_142200.jsonl
+    python tools/uart_logger.py                       # open GUI
+    python tools/uart_logger.py --replay FILE.jsonl   # replay saved session
 """
 
 import argparse
 import csv
 import json
-import os
 import queue
 import re
 import sys
@@ -20,13 +17,19 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
 
+import warnings
 import matplotlib
-import matplotlib.pyplot as plt
-import matplotlib.animation as animation
+matplotlib.use('TkAgg')
+warnings.filterwarnings('ignore', message='No artists with labels')
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
 
 try:
     import serial
+    import serial.tools.list_ports
     SERIAL_AVAILABLE = True
 except ImportError:
     SERIAL_AVAILABLE = False
@@ -35,7 +38,6 @@ except ImportError:
 # Constants
 # ---------------------------------------------------------------------------
 
-# HOLD:NNNNs FLIPS:XXXXXXXX  (firmware now outputs 4-digit decimal hold time)
 FLIP_RE    = re.compile(r'HOLD:(\d+)s FLIPS:([0-9A-Fa-f]{8})')
 REFRESH_RE = re.compile(r'REFRESH:(OFF|SLOW|NORM|FAST)')
 INTV_RE    = re.compile(r'INTERVAL:(\d+)s')
@@ -45,70 +47,36 @@ REFRESH_LABEL = {'OFF': 'Refresh OFF', 'SLOW': 'Slow (~100ms)',
                  'NORM': 'Normal (~7.8µs)', 'FAST': 'Fast (~3.9µs)'}
 
 # ---------------------------------------------------------------------------
-# Argument parsing
-# ---------------------------------------------------------------------------
-
-def parse_args():
-    p = argparse.ArgumentParser(description='DRAM Dosimeter UART Logger')
-    mode = p.add_mutually_exclusive_group()
-    mode.add_argument('--port', default='COM3', help='Serial port (default: COM3)')
-    mode.add_argument('--replay', metavar='FILE', help='Replay from .jsonl file (no hardware needed)')
-
-    p.add_argument('--baud', type=int, default=115200)
-    p.add_argument('--name', help='Experiment name')
-    p.add_argument('--description', help='Experiment description')
-    p.add_argument('--output-dir', default='data', help='Directory for output files (default: data/)')
-    p.add_argument('--window', type=int, default=200, help='Rolling plot window (# of points, default: 200)')
-    p.add_argument('--alert-threshold', type=int, default=None,
-                   metavar='N', help='Warn if flip_count exceeds N')
-    p.add_argument('--ymax', type=int, default=None, help='Fix Y-axis max for plot comparisons')
-    return p.parse_args()
-
-
-def prompt_experiment(args):
-    """Interactively fill in name/description if not provided via CLI."""
-    if not args.name:
-        args.name = input('Experiment name: ').strip() or 'unnamed'
-    if not args.description:
-        args.description = input('Description (press Enter to skip): ').strip()
-    args.name = args.name.replace(' ', '_')
-
-
-# ---------------------------------------------------------------------------
 # Serial reader thread
 # ---------------------------------------------------------------------------
 
 class SerialReader(threading.Thread):
-    """Reads lines from the serial port and pushes them to a queue."""
-
-    def __init__(self, port, baud, line_queue, stop_event):
+    def __init__(self, port, baud, q, stop_event):
         super().__init__(daemon=True)
-        self.port = port
-        self.baud = baud
-        self.q = line_queue
-        self.stop = stop_event
+        self.port, self.baud = port, baud
+        self.q, self.stop = q, stop_event
         self._ser = None
 
     def run(self):
         while not self.stop.is_set():
             try:
                 self._ser = serial.Serial(self.port, self.baud, timeout=1)
-                print(f'[serial] Connected to {self.port} @ {self.baud}', flush=True)
+                self.q.put(('STATUS', f'Connected to {self.port} @ {self.baud}'))
                 while not self.stop.is_set():
                     raw = self._ser.readline()
                     if raw:
-                        self.q.put((time.time(), raw))
-            except serial.SerialException as e:
-                print(f'[serial] {e} — retrying in 3s…', flush=True)
+                        self.q.put(('DATA', (time.time(), raw)))
+            except Exception as e:
+                self.q.put(('STATUS', f'Serial error: {e} — retrying in 3 s…'))
                 if self._ser and self._ser.is_open:
                     self._ser.close()
                 time.sleep(3)
 
     def write(self, data: bytes) -> bool:
-        """Send bytes to the board. Returns False if not connected."""
         if self._ser and self._ser.is_open:
             try:
                 self._ser.write(data)
+                self._ser.flush()
                 return True
             except Exception:
                 return False
@@ -119,84 +87,66 @@ class SerialReader(threading.Thread):
         if self._ser and self._ser.is_open:
             self._ser.close()
 
-
 # ---------------------------------------------------------------------------
 # Message parser
 # ---------------------------------------------------------------------------
 
 def parse_line(raw_bytes, ts_unix):
-    """Return a dict describing the message, or None if unrecognised."""
     try:
         line = raw_bytes.decode('ascii', errors='replace').strip()
     except Exception:
         return None
-
     ts = datetime.fromtimestamp(ts_unix, tz=timezone.utc).isoformat()
-
     m = FLIP_RE.search(line)
     if m:
         return {'type': 'FLIP', 'timestamp': ts, 'ts_unix': ts_unix,
-                'hold_s': int(m.group(1)), 'flip_count': int(m.group(2), 16),
-                'raw': line}
-
+                'hold_s': int(m.group(1)), 'flip_count': int(m.group(2), 16), 'raw': line}
     m = REFRESH_RE.search(line)
     if m:
         return {'type': 'REFRESH', 'timestamp': ts, 'ts_unix': ts_unix,
                 'refresh_rate': m.group(1), 'raw': line}
-
     m = INTV_RE.search(line)
     if m:
         return {'type': 'INTERVAL', 'timestamp': ts, 'ts_unix': ts_unix,
                 'hold_s': int(m.group(1)), 'raw': line}
-
     return None
-
 
 # ---------------------------------------------------------------------------
 # Data store
 # ---------------------------------------------------------------------------
 
 class DataStore:
-    """Accumulates records and writes CSV + JSONL files."""
-
     CSV_FIELDS = ['timestamp', 'iteration', 'hold_s', 'refresh_rate', 'flip_count', 'experiment']
 
     def __init__(self, output_dir, name, description, start_time_iso):
         self.name = name
         self.description = description
-        self.records = []          # FLIP records only
-        self.refresh_rate = 'OFF'  # track current state
+        self.records = []       # FLIP rows (include ts_unix for plotting)
+        self.notes   = []       # NOTE records
+        self.refresh_rate = 'OFF'
         self.iteration = 0
 
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        base = Path(output_dir) / f'{name}_{stamp}'
-        self._csv_path = base.with_suffix('.csv')
-        self._jsonl_path = base.with_suffix('.jsonl')
+        base  = Path(output_dir) / f'{name}_{stamp}'
+        self.csv_path   = base.with_suffix('.csv')
+        self.jsonl_path = base.with_suffix('.jsonl')
 
-        # Write CSV header
-        with open(self._csv_path, 'w', newline='') as f:
+        with open(self.csv_path, 'w', newline='') as f:
             f.write(f'# experiment: {name}\n')
             f.write(f'# description: {description}\n')
             f.write(f'# start_time: {start_time_iso}\n')
-            writer = csv.DictWriter(f, fieldnames=self.CSV_FIELDS)
-            writer.writeheader()
-        self._csv_file = open(self._csv_path, 'a', newline='', buffering=1)
+            csv.DictWriter(f, fieldnames=self.CSV_FIELDS).writeheader()
+
+        self._csv_file   = open(self.csv_path,   'a', newline='', buffering=1)
         self._csv_writer = csv.DictWriter(self._csv_file, fieldnames=self.CSV_FIELDS)
-
-        self._jsonl_file = open(self._jsonl_path, 'a', buffering=1)
-
-        print(f'[store] Saving to {self._csv_path}', flush=True)
+        self._jsonl_file = open(self.jsonl_path, 'a', buffering=1)
 
     def ingest(self, record):
-        """Process a parsed record. Returns True if it was a FLIP record."""
-        # Always write JSONL for all record types
         self._jsonl_file.write(json.dumps(record) + '\n')
-
         if record['type'] == 'REFRESH':
             self.refresh_rate = record['refresh_rate']
             return False
-
         if record['type'] == 'FLIP':
             self.iteration += 1
             row = {
@@ -211,8 +161,15 @@ class DataStore:
             self._csv_writer.writerow({k: v for k, v in row.items() if k in self.CSV_FIELDS})
             self.records.append(row)
             return True
-
         return False
+
+    def add_note(self, text):
+        ts_unix = time.time()
+        ts = datetime.fromtimestamp(ts_unix, tz=timezone.utc).isoformat()
+        record = {'type': 'NOTE', 'timestamp': ts, 'ts_unix': ts_unix, 'text': text}
+        self._jsonl_file.write(json.dumps(record) + '\n')
+        self.notes.append(record)
+        return record
 
     def close(self):
         self._csv_file.close()
@@ -222,293 +179,533 @@ class DataStore:
         if not self.records:
             return 'No FLIP records captured.'
         counts = [r['flip_count'] for r in self.records]
-        return (f'  Iterations : {self.iteration}\n'
-                f'  Flip mean  : {sum(counts)/len(counts):.1f}\n'
-                f'  Flip min   : {min(counts)}\n'
-                f'  Flip max   : {max(counts)}\n'
-                f'  CSV        : {self._csv_path}\n'
-                f'  JSONL      : {self._jsonl_path}')
-
-
-# ---------------------------------------------------------------------------
-# Live plotter
-# ---------------------------------------------------------------------------
-
-class LivePlotter:
-    def __init__(self, store, window, ymax, alert_threshold):
-        self.store = store
-        self.window = window
-        self.ymax = ymax
-        self.alert_threshold = alert_threshold
-
-        matplotlib.use('TkAgg') if 'TkAgg' in matplotlib.rcsetup.all_backends else None
-        self.fig, self.ax = plt.subplots(figsize=(12, 5))
-        self.fig.canvas.manager.set_window_title('DRAM Dosimeter — Live')
-        self.fig.tight_layout(rect=[0, 0, 0.78, 1])
-
-        self._refresh_lines = []   # (ts_unix, label)
-        self._last_refresh = None
-
-        plt.ion()
-
-    def _stats_text(self, counts):
-        if not counts:
-            return ''
         mean = sum(counts) / len(counts)
-        variance = sum((c - mean) ** 2 for c in counts) / len(counts)
-        std = variance ** 0.5
-        return (f'n={len(counts)}\n'
-                f'mean={mean:.0f}\n'
-                f'std={std:.0f}\n'
-                f'min={min(counts)}\n'
-                f'max={max(counts)}')
-
-    def update(self, _frame):
-        records = self.store.records[-self.window:]
-        if not records:
-            return
-
-        xs = [r['ts_unix'] for r in records]
-        ys = [r['flip_count'] for r in records]
-        hold_vals = [r['hold_s'] for r in records]
-
-        self.ax.clear()
-
-        # Scatter colored by hold time
-        for hold_s, color in HOLD_COLORS.items():
-            mask_x = [x for x, h in zip(xs, hold_vals) if h == hold_s]
-            mask_y = [y for y, h in zip(ys, hold_vals) if h == hold_s]
-            if mask_x:
-                self.ax.scatter(mask_x, mask_y, color=color, s=18, zorder=3,
-                                label=f'{hold_s}s hold')
-
-        # Line connecting points
-        self.ax.plot(xs, ys, color='#888', linewidth=0.8, zorder=2)
-
-        # Alert threshold line
-        if self.alert_threshold is not None:
-            self.ax.axhline(self.alert_threshold, color='red', linestyle='--',
-                            linewidth=1, label=f'Alert: {self.alert_threshold}')
-
-        # Refresh rate change markers (within window)
-        x_min = xs[0] if xs else 0
-        for ts_u, label in self._refresh_lines:
-            if ts_u >= x_min:
-                self.ax.axvline(ts_u, color='purple', linestyle=':', linewidth=1.2, alpha=0.7)
-                self.ax.text(ts_u, self.ax.get_ylim()[1] * 0.95, label,
-                             fontsize=7, color='purple', rotation=90, va='top')
-
-        # Axes
-        self.ax.set_xlabel('Time (unix)')
-        self.ax.set_ylabel('Bit Flips')
-        self.ax.set_title(f'Experiment: {self.store.name}  |  '
-                          f'Iteration: {self.store.iteration}  |  '
-                          f'Refresh: {self.store.refresh_rate}')
-        if self.ymax:
-            self.ax.set_ylim(0, self.ymax)
-        self.ax.legend(loc='upper left', fontsize=8)
-
-        # Stats text box (right side)
-        stats = self._stats_text(ys)
-        self.fig.text(0.80, 0.5, stats, transform=self.fig.transFigure,
-                      fontsize=9, verticalalignment='center',
-                      bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-
-        self.fig.canvas.draw_idle()
-
-    def register_refresh(self, ts_unix, rate):
-        label = REFRESH_LABEL.get(rate, rate)
-        self._refresh_lines.append((ts_unix, label))
-
-    def start(self, interval_ms=1500):
-        self._anim = animation.FuncAnimation(
-            self.fig, self.update, interval=interval_ms, cache_frame_data=False)
-        plt.show(block=False)
-
+        return (f'  Iterations : {self.iteration}\n'
+                f'  Flip mean  : {mean:.1f}  min: {min(counts)}  max: {max(counts)}\n'
+                f'  CSV   → {self.csv_path}\n'
+                f'  JSONL → {self.jsonl_path}')
 
 # ---------------------------------------------------------------------------
 # Hang detector
 # ---------------------------------------------------------------------------
 
 class HangDetector:
-    def __init__(self, hold_s=5, multiplier=2.5):
-        self.multiplier = multiplier
-        self._expected_s = hold_s
-        self._last_flip_time = time.time()
-
-    def update_hold(self, hold_s):
-        self._expected_s = hold_s
-
-    def tick(self):
-        elapsed = time.time() - self._last_flip_time
-        threshold = self._expected_s * self.multiplier + 60  # generous buffer for scan time
-        if elapsed > threshold:
-            print(f'\n[WARN] No FLIP message in {elapsed:.0f}s '
-                  f'(expected ~{self._expected_s}s hold). Board may be hung.',
-                  flush=True)
-
+    MULT = 2.5
+    def __init__(self):
+        self._expected_s = 5
+        self._last = time.time()
     def reset(self, hold_s):
         self._expected_s = hold_s
-        self._last_flip_time = time.time()
-
-
-# ---------------------------------------------------------------------------
-# Replay mode
-# ---------------------------------------------------------------------------
-
-def replay(jsonl_path, store, plotter, args):
-    """Feed a .jsonl file into the store and plotter as if it were live."""
-    print(f'[replay] Reading {jsonl_path}', flush=True)
-    plotter.start()
-    with open(jsonl_path) as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if record.get('type') == 'REFRESH':
-                plotter.register_refresh(record.get('ts_unix', 0), record['refresh_rate'])
-            if store.ingest(record) and args.alert_threshold:
-                if record['flip_count'] > args.alert_threshold:
-                    print(f'[ALERT] flip_count={record["flip_count"]} > {args.alert_threshold}',
-                          flush=True)
-            time.sleep(0.05)  # slight delay so the animation can render
-            plt.pause(0.01)
-
-    print('\n[replay] Done. Close the plot window to exit.')
-    plt.show(block=True)
-
+        self._last = time.time()
+    def update_hold(self, hold_s):
+        self._expected_s = hold_s
+    def is_hung(self):
+        return time.time() - self._last > self._expected_s * self.MULT + 60
+    def seconds_since(self):
+        return int(time.time() - self._last)
 
 # ---------------------------------------------------------------------------
-# Stdin command thread
+# GUI application
 # ---------------------------------------------------------------------------
 
-def stdin_command_thread(reader, stop_event):
-    """
-    Reads lines from stdin.  A bare integer (1-9999) sends "H<N>\\n" to the
-    board, which updates the hold time without requiring a button press.
-    Runs as a daemon thread so it dies automatically on Ctrl-C.
-    """
-    print('[cmd] Type a hold time in seconds (1-9999) and press Enter to send to board.',
-          flush=True)
-    while not stop_event.is_set():
+class DosimeterApp:
+    POLL_MS = 400
+    PLOT_MS = 1500
+
+    def __init__(self, root, replay_file=None):
+        self.root = root
+        root.title('DRAM Dosimeter')
+        root.minsize(960, 700)
+        root.columnconfigure(0, weight=1)
+        root.rowconfigure(2, weight=1)   # plot row expands
+        root.protocol('WM_DELETE_WINDOW', self._on_close)
+
+        self._reader     = None
+        self._store      = None
+        self._hang       = HangDetector()
+        self._q          = queue.Queue()
+        self._stop       = threading.Event()
+        self._start_unix = None
+        self._alert      = None
+        self._window     = 200
+        self._ref_events = []   # (ts_unix, label) for vertical lines on plot
+        self._connected  = False
+
+        self._build_ui()
+
+        # Loops run continuously; they no-op when not connected
+        root.after(self.POLL_MS, self._poll)
+        root.after(self.PLOT_MS, self._update_plot)
+
+        if replay_file:
+            root.after(200, lambda: self._start_replay(replay_file))
+
+    # -----------------------------------------------------------------------
+    # UI construction
+    # -----------------------------------------------------------------------
+
+    def _build_ui(self):
+        pad = {'padx': 4, 'pady': 2}
+
+        # ── Row 0: connection ──────────────────────────────────────────────
+        cf = ttk.LabelFrame(self.root, text='Connection', padding=4)
+        cf.grid(row=0, column=0, sticky='ew', padx=6, pady=(6, 0))
+
+        ttk.Label(cf, text='Port:').pack(side='left')
+        self._port_var = tk.StringVar(value='COM3')
+        self._port_cb  = ttk.Combobox(cf, textvariable=self._port_var, width=7)
+        self._port_cb.pack(side='left', padx=(2, 0))
+        ttk.Button(cf, text='↺', width=2, command=self._refresh_ports).pack(side='left', padx=2)
+
+        ttk.Label(cf, text='Baud:').pack(side='left', padx=(8, 0))
+        self._baud_var = tk.StringVar(value='115200')
+        ttk.Entry(cf, textvariable=self._baud_var, width=7).pack(side='left', padx=2)
+
+        ttk.Separator(cf, orient='vertical').pack(side='left', fill='y', padx=8)
+
+        self._conn_btn = ttk.Button(cf, text='Connect',    command=self._connect)
+        self._disc_btn = ttk.Button(cf, text='Disconnect', command=self._disconnect, state='disabled')
+        self._conn_btn.pack(side='left', padx=2)
+        self._disc_btn.pack(side='left', padx=2)
+
+        ttk.Separator(cf, orient='vertical').pack(side='left', fill='y', padx=8)
+
+        ttk.Label(cf, text='Output dir:').pack(side='left')
+        self._outdir_var = tk.StringVar(value='data')
+        ttk.Entry(cf, textvariable=self._outdir_var, width=12).pack(side='left', padx=2)
+        ttk.Button(cf, text='…', width=2, command=self._browse_dir).pack(side='left')
+
+        # ── Row 1: experiment info ─────────────────────────────────────────
+        ef = ttk.LabelFrame(self.root, text='Experiment', padding=4)
+        ef.grid(row=1, column=0, sticky='ew', padx=6, pady=(4, 0))
+        ef.columnconfigure(1, weight=1)
+        ef.columnconfigure(3, weight=3)
+
+        ttk.Label(ef, text='Name:').grid(row=0, column=0, sticky='w', **pad)
+        self._name_var = tk.StringVar(value='experiment')
+        ttk.Entry(ef, textvariable=self._name_var, width=20).grid(row=0, column=1, sticky='ew', **pad)
+
+        ttk.Label(ef, text='Description:').grid(row=0, column=2, sticky='w', **pad)
+        self._desc_var = tk.StringVar()
+        ttk.Entry(ef, textvariable=self._desc_var).grid(row=0, column=3, sticky='ew', **pad)
+
+        # ── Row 2: live plot ───────────────────────────────────────────────
+        pf = ttk.Frame(self.root)
+        pf.grid(row=2, column=0, sticky='nsew', padx=6, pady=4)
+        pf.columnconfigure(0, weight=1)
+        pf.rowconfigure(0, weight=1)
+
+        self._fig = Figure(figsize=(10, 4), tight_layout=True)
+        self._ax  = self._fig.add_subplot(111)
+        self._canvas = FigureCanvasTkAgg(self._fig, master=pf)
+        self._canvas.get_tk_widget().grid(row=0, column=0, sticky='nsew')
+        self._draw_empty_plot()
+
+        # ── Row 3: status bar ──────────────────────────────────────────────
+        sf = ttk.Frame(self.root, relief='sunken', borderwidth=1)
+        sf.grid(row=3, column=0, sticky='ew', padx=6)
+
+        self._slabels = {}
+        for key, text in [('iter', 'Iter: —'), ('flips', 'Flips: —'),
+                          ('hold', 'Hold: —'), ('refresh', 'Refresh: —'),
+                          ('elapsed', 'Elapsed: —'), ('hang', '')]:
+            lbl = ttk.Label(sf, text=text, padding=(10, 2))
+            lbl.pack(side='left')
+            self._slabels[key] = lbl
+
+        # ── Row 4: controls ────────────────────────────────────────────────
+        ctrl = ttk.Frame(self.root, padding=(6, 2))
+        ctrl.grid(row=4, column=0, sticky='ew')
+
+        # Hold time
+        ttk.Label(ctrl, text='Hold time (s):').pack(side='left')
+        self._hold_var = tk.StringVar()
+        hold_e = ttk.Entry(ctrl, textvariable=self._hold_var, width=6)
+        hold_e.pack(side='left', padx=(2, 0))
+        hold_e.bind('<Return>', lambda _: self._send_hold())
+        ttk.Button(ctrl, text='Send to board', command=self._send_hold).pack(side='left', padx=(2, 14))
+
+        # Alert threshold
+        ttk.Label(ctrl, text='Alert if flips >').pack(side='left')
+        self._alert_var = tk.StringVar()
+        alert_e = ttk.Entry(ctrl, textvariable=self._alert_var, width=8)
+        alert_e.pack(side='left', padx=(2, 0))
+        alert_e.bind('<Return>', lambda _: self._set_alert())
+        ttk.Button(ctrl, text='Set', command=self._set_alert).pack(side='left', padx=(2, 14))
+
+        # Plot window
+        ttk.Label(ctrl, text='Plot last').pack(side='left')
+        self._win_var = tk.StringVar(value='200')
+        win_e = ttk.Entry(ctrl, textvariable=self._win_var, width=5)
+        win_e.pack(side='left', padx=(2, 0))
+        win_e.bind('<Return>', lambda _: self._set_window())
+        ttk.Label(ctrl, text='points').pack(side='left', padx=(2, 2))
+        ttk.Button(ctrl, text='Set', command=self._set_window).pack(side='left')
+
+        # ── Row 5: note entry ──────────────────────────────────────────────
+        nf = ttk.LabelFrame(self.root, text='Annotation / Note  (logged to JSONL with timestamp)', padding=4)
+        nf.grid(row=5, column=0, sticky='ew', padx=6, pady=(0, 2))
+        nf.columnconfigure(0, weight=1)
+
+        self._note_var = tk.StringVar()
+        note_e = ttk.Entry(nf, textvariable=self._note_var)
+        note_e.grid(row=0, column=0, sticky='ew', padx=(0, 4))
+        note_e.bind('<Return>', lambda _: self._add_note())
+        ttk.Button(nf, text='Add Note', command=self._add_note).grid(row=0, column=1)
+
+        # ── Row 6: log ─────────────────────────────────────────────────────
+        lf = ttk.LabelFrame(self.root, text='Log', padding=2)
+        lf.grid(row=6, column=0, sticky='nsew', padx=6, pady=(0, 6))
+        lf.columnconfigure(0, weight=1)
+        lf.rowconfigure(0, weight=1)
+        self.root.rowconfigure(6, weight=0)
+
+        self._log = tk.Text(lf, height=8, state='disabled',
+                            font=('Courier', 9), bg='#1e1e1e', fg='#d4d4d4',
+                            wrap='none', relief='flat')
+        sb = ttk.Scrollbar(lf, command=self._log.yview)
+        self._log.configure(yscrollcommand=sb.set)
+        self._log.grid(row=0, column=0, sticky='nsew')
+        sb.grid(row=0, column=1, sticky='ns')
+
+        # Log tag colours (VS Code dark theme inspired)
+        self._log.tag_configure('flip',     foreground='#4EC9B0')
+        self._log.tag_configure('note',     foreground='#DCDCAA')
+        self._log.tag_configure('refresh',  foreground='#C586C0')
+        self._log.tag_configure('interval', foreground='#9CDCFE')
+        self._log.tag_configure('status',   foreground='#808080', font=('Courier', 9, 'italic'))
+        self._log.tag_configure('alert',    foreground='#F44747', font=('Courier', 9, 'bold'))
+
+        self._refresh_ports()
+
+    # -----------------------------------------------------------------------
+    # Helpers
+    # -----------------------------------------------------------------------
+
+    def _refresh_ports(self):
+        if not SERIAL_AVAILABLE:
+            return
+        ports = [p.device for p in serial.tools.list_ports.comports()]
+        self._port_cb['values'] = ports
+        if ports and self._port_var.get() not in ports:
+            self._port_var.set(ports[0])
+
+    def _browse_dir(self):
+        d = filedialog.askdirectory(initialdir=self._outdir_var.get() or '.')
+        if d:
+            self._outdir_var.set(d)
+
+    def _log_append(self, text, tag='status'):
+        w = self._log
+        w.config(state='normal')
+        for line in str(text).splitlines():
+            w.insert('end', line + '\n', tag)
+        # Keep last 300 lines
+        lines = int(w.index('end-1c').split('.')[0])
+        if lines > 300:
+            w.delete('1.0', f'{lines - 300}.0')
+        w.see('end')
+        w.config(state='disabled')
+
+    def _draw_empty_plot(self):
+        self._ax.clear()
+        self._ax.set_xlabel('Time (s)')
+        self._ax.set_ylabel('Bit Flips')
+        self._ax.set_title('No data')
+        self._canvas.draw_idle()
+
+    # -----------------------------------------------------------------------
+    # Connection
+    # -----------------------------------------------------------------------
+
+    def _connect(self):
+        if not SERIAL_AVAILABLE:
+            messagebox.showerror('Missing dependency',
+                                 'pyserial is not installed.\nRun: pip install pyserial')
+            return
+        name = self._name_var.get().strip().replace(' ', '_') or 'unnamed'
+        desc = self._desc_var.get().strip()
+        self._start_unix = time.time()
+        self._store = DataStore(
+            output_dir=self._outdir_var.get() or 'data',
+            name=name, description=desc,
+            start_time_iso=datetime.now(tz=timezone.utc).isoformat())
+        self._ref_events.clear()
+        self._hang = HangDetector()
+        self._stop  = threading.Event()
+        self._q     = queue.Queue()
+        self._reader = SerialReader(self._port_var.get(), int(self._baud_var.get()),
+                                    self._q, self._stop)
+        self._reader.start()
+        self._connected = True
+        self._conn_btn.config(state='disabled')
+        self._disc_btn.config(state='normal')
+        self._log_append(f'── Session: {name}  {desc}', 'status')
+        self._log_append(f'   CSV   → {self._store.csv_path}', 'status')
+        self._log_append(f'   JSONL → {self._store.jsonl_path}', 'status')
+
+    def _disconnect(self):
+        self._connected = False
+        if self._reader:
+            self._reader.close()
+            self._reader = None
+        if self._store:
+            self._store.close()
+            self._log_append('── Session ended', 'status')
+            self._log_append(self._store.summary(), 'status')
+            self._store = None
+        self._conn_btn.config(state='normal')
+        self._disc_btn.config(state='disabled')
+
+    # -----------------------------------------------------------------------
+    # Event loops (always scheduled; no-op when idle)
+    # -----------------------------------------------------------------------
+
+    def _poll(self):
         try:
-            line = input()
-        except EOFError:
-            break
-        line = line.strip()
-        if not line:
-            continue
-        if not line.isdigit():
-            print('\n[cmd] Enter a positive integer (seconds, 1-9999)', flush=True)
-            continue
-        val = int(line)
-        if val < 1 or val > 9999:
-            print('\n[cmd] Hold time must be 1-9999 seconds', flush=True)
-            continue
-        cmd = f'H{val}\n'.encode('ascii')
-        if reader.write(cmd):
-            print(f'\n[cmd] Sent H{val} — board will confirm with INTERVAL:{val:04d}s',
-                  flush=True)
-        else:
-            print('\n[cmd] Not connected — command not sent', flush=True)
+            if self._connected and self._store:
+                while not self._q.empty():
+                    kind, payload = self._q.get_nowait()
+                    if kind == 'STATUS':
+                        self._log_append(payload, 'status')
+                    elif kind == 'DATA':
+                        ts_unix, raw = payload
+                        record = parse_line(raw, ts_unix)
+                        if record:
+                            self._handle_record(record)
 
+                if self._hang.is_hung():
+                    self._slabels['hang'].config(
+                        text=f'⚠ No FLIP in {self._hang.seconds_since()} s')
+                else:
+                    self._slabels['hang'].config(text='')
+        except Exception as e:
+            self._log_append(f'Poll error: {e}', 'alert')
+        finally:
+            self.root.after(self.POLL_MS, self._poll)
+
+    def _handle_record(self, record):
+        if record['type'] == 'REFRESH':
+            label = REFRESH_LABEL.get(record['refresh_rate'], record['refresh_rate'])
+            self._ref_events.append((record['ts_unix'], label))
+            self._log_append(f"Refresh rate → {record['refresh_rate']}", 'refresh')
+
+        elif record['type'] == 'INTERVAL':
+            self._log_append(f"Hold interval → {record['hold_s']} s", 'interval')
+            self._hang.update_hold(record['hold_s'])
+
+        elif record['type'] == 'FLIP':
+            self._hang.reset(record['hold_s'])
+
+        self._store.ingest(record)
+
+        if record['type'] == 'FLIP':
+            fc = record['flip_count']
+            elapsed = int(time.time() - self._start_unix)
+            self._slabels['iter'].config(    text=f"Iter: {self._store.iteration}")
+            self._slabels['flips'].config(   text=f"Flips: {fc:,}")
+            self._slabels['hold'].config(    text=f"Hold: {record['hold_s']} s")
+            self._slabels['refresh'].config( text=f"Refresh: {self._store.refresh_rate}")
+            self._slabels['elapsed'].config( text=f"Elapsed: {elapsed} s")
+
+            is_alert = self._alert is not None and fc > self._alert
+            tag = 'alert' if is_alert else 'flip'
+            self._log_append(
+                f"[{record['timestamp'][11:19]}] #{self._store.iteration:>4}  "
+                f"flips={fc:>10,}  hold={record['hold_s']}s  "
+                f"refresh={self._store.refresh_rate}", tag)
+            if is_alert:
+                self._log_append(f'  ⚠ {fc:,} exceeds alert threshold {self._alert:,}', 'alert')
+
+    def _update_plot(self):
+        try:
+            if self._store and self._store.records:
+                self._redraw()
+        except Exception:
+            pass
+        finally:
+            self.root.after(self.PLOT_MS, self._update_plot)
+
+    def _redraw(self):
+        records = self._store.records[-self._window:]
+        start   = self._start_unix or records[0]['ts_unix']
+        xs = [r['ts_unix'] - start for r in records]
+        ys = [r['flip_count']      for r in records]
+        hs = [r['hold_s']          for r in records]
+
+        ax = self._ax
+        ax.clear()
+
+        for hold_s, color in HOLD_COLORS.items():
+            mx = [x for x, h in zip(xs, hs) if h == hold_s]
+            my = [y for y, h in zip(ys, hs) if h == hold_s]
+            if mx:
+                ax.scatter(mx, my, color=color, s=18, zorder=3, label=f'{hold_s} s hold')
+        ax.plot(xs, ys, color='#888', linewidth=0.8, zorder=2)
+
+        if self._alert is not None:
+            ax.axhline(self._alert, color='#F44747', linestyle='--',
+                       linewidth=1, label=f'Alert: {self._alert:,}')
+
+        # Refresh-rate change markers
+        x_min = xs[0] if xs else 0
+        ymax  = ax.get_ylim()[1] or 1
+        for ts_u, label in self._ref_events:
+            rx = ts_u - start
+            if rx >= x_min:
+                ax.axvline(rx, color='#C586C0', linestyle=':', linewidth=1.2, alpha=0.7)
+                ax.text(rx, ymax * 0.95, label, fontsize=7, color='#C586C0',
+                        rotation=90, va='top')
+
+        # Note markers
+        for note in self._store.notes:
+            nx = note['ts_unix'] - start
+            if nx >= x_min:
+                ax.axvline(nx, color='#DCDCAA', linestyle='--', linewidth=1.0, alpha=0.8)
+                ax.text(nx, ymax * 0.5, note['text'][:24],
+                        fontsize=7, color='#DCDCAA', rotation=90, va='center')
+
+        # Stats box
+        if ys:
+            mean = sum(ys) / len(ys)
+            std  = (sum((y - mean) ** 2 for y in ys) / len(ys)) ** 0.5
+            ax.text(0.99, 0.97,
+                    f'n={len(ys)}\nmean={mean:.0f}\nstd={std:.0f}\nmin={min(ys)}\nmax={max(ys)}',
+                    transform=ax.transAxes, fontsize=8, va='top', ha='right',
+                    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
+        ax.set_xlabel('Time (s)')
+        ax.set_ylabel('Bit Flips')
+        ax.set_title(
+            f'{self._store.name}  |  Iter: {self._store.iteration}'
+            f'  |  Refresh: {self._store.refresh_rate}')
+        handles, labels = ax.get_legend_handles_labels()
+        if handles:
+            ax.legend(handles, labels, loc='upper left', fontsize=8)
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', UserWarning)
+            self._fig.tight_layout()
+        self._canvas.draw_idle()
+
+    # -----------------------------------------------------------------------
+    # Controls
+    # -----------------------------------------------------------------------
+
+    def _send_hold(self):
+        val = self._hold_var.get().strip()
+        if not val.isdigit() or not (1 <= int(val) <= 9999):
+            messagebox.showwarning('Hold time', 'Enter an integer between 1 and 9999')
+            return
+        if self._reader:
+            cmd = f'H{val}\n'.encode('ascii')
+            if self._reader.write(cmd):
+                self._log_append(f'→ Sent hold = {val} s to board', 'interval')
+            else:
+                self._log_append('⚠ Not connected — command not sent', 'alert')
+        else:
+            self._log_append('⚠ Not connected', 'alert')
+        self._hold_var.set('')
+
+    def _set_alert(self):
+        val = self._alert_var.get().strip()
+        if not val:
+            self._alert = None
+            self._log_append('Alert threshold cleared', 'status')
+        elif val.isdigit():
+            self._alert = int(val)
+            self._log_append(f'Alert threshold → {self._alert:,} flips', 'status')
+        else:
+            messagebox.showwarning('Alert', 'Enter an integer, or leave blank to clear')
+
+    def _set_window(self):
+        val = self._win_var.get().strip()
+        if val.isdigit() and int(val) > 0:
+            self._window = int(val)
+
+    def _add_note(self):
+        text = self._note_var.get().strip()
+        if not text:
+            return
+        if self._store:
+            self._store.add_note(text)
+            self._log_append(f'[NOTE] {text}', 'note')
+        else:
+            self._log_append(f'[NOTE] {text}  (not saved — no active session)', 'note')
+        self._note_var.set('')
+
+    # -----------------------------------------------------------------------
+    # Replay
+    # -----------------------------------------------------------------------
+
+    def _start_replay(self, path):
+        path = Path(path)
+        if not path.exists():
+            messagebox.showerror('Replay', f'File not found:\n{path}')
+            return
+        self._name_var.set(path.stem)
+        self._desc_var.set('replay')
+        self._start_unix = None
+        self._store = DataStore(
+            output_dir=str(path.parent),
+            name=path.stem + '_replay',
+            description='replay',
+            start_time_iso=datetime.now(tz=timezone.utc).isoformat())
+        self._ref_events.clear()
+        self._log_append(f'Replaying {path}', 'status')
+
+        try:
+            with open(path) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        record = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+
+                    if self._start_unix is None:
+                        self._start_unix = record.get('ts_unix', time.time())
+
+                    if record.get('type') == 'NOTE':
+                        self._store.notes.append(record)
+                        self._log_append(f'[NOTE] {record["text"]}', 'note')
+                    elif record.get('type') == 'REFRESH':
+                        label = REFRESH_LABEL.get(record.get('refresh_rate', ''), '')
+                        self._ref_events.append((record['ts_unix'], label))
+                        self._store.ingest(record)
+                    else:
+                        self._store.ingest(record)
+
+        except Exception as e:
+            self._log_append(f'Replay error: {e}', 'alert')
+            return
+
+        self._log_append(f'Replay complete.\n{self._store.summary()}', 'status')
+        self._redraw()
+        self._conn_btn.config(state='disabled')
+
+    # -----------------------------------------------------------------------
+    # Close
+    # -----------------------------------------------------------------------
+
+    def _on_close(self):
+        self._disconnect()
+        self.root.destroy()
 
 # ---------------------------------------------------------------------------
-# Main
+# Entry point
 # ---------------------------------------------------------------------------
 
 def main():
-    args = parse_args()
+    p = argparse.ArgumentParser(description='DRAM Dosimeter GUI Logger')
+    p.add_argument('--replay', metavar='FILE',
+                   help='Replay a .jsonl file (no hardware needed)')
+    args = p.parse_args()
 
-    if not args.replay:
-        if not SERIAL_AVAILABLE:
-            sys.exit('[error] pyserial not installed. Run: pip install pyserial matplotlib')
-        prompt_experiment(args)
-
-    start_unix = time.time()
-    start_iso = datetime.now(tz=timezone.utc).isoformat()
-    store = DataStore(
-        output_dir=args.output_dir,
-        name=args.name or 'replay',
-        description=args.description or '',
-        start_time_iso=start_iso,
-    )
-    plotter = LivePlotter(store, args.window, args.ymax, args.alert_threshold)
-    hang = HangDetector()
-
-    # ---- Replay mode -------------------------------------------------------
-    if args.replay:
-        replay(args.replay, store, plotter, args)
-        store.close()
-        print('\n--- Session summary ---')
-        print(store.summary())
-        return
-
-    # ---- Live mode ---------------------------------------------------------
-    line_queue = queue.Queue()
-    stop_event = threading.Event()
-    reader = SerialReader(args.port, args.baud, line_queue, stop_event)
-    reader.start()
-    plotter.start()
-
-    cmd_thread = threading.Thread(
-        target=stdin_command_thread, args=(reader, stop_event), daemon=True)
-    cmd_thread.start()
-
-    print(f'\n[logger] Listening on {args.port}. Press Ctrl-C to stop.\n', flush=True)
-
-    try:
-        while True:
-            # Drain the queue
-            while not line_queue.empty():
-                ts_unix, raw = line_queue.get_nowait()
-                record = parse_line(raw, ts_unix)
-                if record is None:
-                    continue
-
-                # Hang detector bookkeeping
-                if record['type'] == 'INTERVAL':
-                    hang.update_hold(record['hold_s'])
-                if record['type'] == 'FLIP':
-                    hang.reset(record['hold_s'])
-
-                # Alert check
-                if record['type'] == 'FLIP' and args.alert_threshold:
-                    if record['flip_count'] > args.alert_threshold:
-                        print(f'\n[ALERT] flip_count={record["flip_count"]} '
-                              f'> threshold {args.alert_threshold}', flush=True)
-
-                # Plotter refresh annotation
-                if record['type'] == 'REFRESH':
-                    plotter.register_refresh(ts_unix, record['refresh_rate'])
-
-                store.ingest(record)
-
-                # Terminal status line
-                if record['type'] == 'FLIP':
-                    print(f'\r  Iter {store.iteration:>5}  |  '
-                          f'Flips: {record["flip_count"]:>10,}  |  '
-                          f'Hold: {record["hold_s"]}s  |  '
-                          f'Refresh: {store.refresh_rate:<5}  |  '
-                          f'Elapsed: {int(time.time() - start_unix)}s',
-                          end='', flush=True)
-
-            hang.tick()
-            plt.pause(0.5)
-
-    except KeyboardInterrupt:
-        print('\n\n[logger] Shutting down…', flush=True)
-    finally:
-        reader.close()
-        store.close()
-        plt.close('all')
-        print('\n--- Session summary ---')
-        print(store.summary())
-
+    root = tk.Tk()
+    DosimeterApp(root, replay_file=args.replay)
+    root.mainloop()
 
 if __name__ == '__main__':
     main()

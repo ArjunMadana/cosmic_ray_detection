@@ -1,0 +1,66 @@
+{"type": "FLIP", "timestamp": "2026-04-04T16:10:36.231227+00:00", "ts_unix": 1775319036.2312272, "hold_s": 5, "flip_count": 3, "raw": "HOLD:0005s FLIPS:00000003"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:10:39.895083+00:00", "ts_unix": 1775319039.8950827, "hold_s": 5, "flip_count": 0, "raw": "HOLD:0005s FLIPS:00000000"}
+{"type": "INTERVAL", "timestamp": "2026-04-04T16:10:40.887143+00:00", "ts_unix": 1775319040.8871434, "hold_s": 60, "raw": "INTERVAL:0060s"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:11:40.788529+00:00", "ts_unix": 1775319100.7885287, "hold_s": 60, "flip_count": 9202, "raw": "HOLD:0060s FLIPS:000023F2"}
+{"type": "NOTE", "timestamp": "2026-04-04T16:12:00.264932+00:00", "ts_unix": 1775319120.2649324, "text": "DRAM temp 97 F"}
+{"type": "NOTE", "timestamp": "2026-04-04T16:12:18.609309+00:00", "ts_unix": 1775319138.6093087, "text": "DRAM temp 96.6 F"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:12:41.682344+00:00", "ts_unix": 1775319161.682344, "hold_s": 60, "flip_count": 9303, "raw": "HOLD:0060s FLIPS:00002457"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:13:42.576016+00:00", "ts_unix": 1775319222.5760157, "hold_s": 60, "flip_count": 9308, "raw": "HOLD:0060s FLIPS:0000245C"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:14:43.469606+00:00", "ts_unix": 1775319283.469606, "hold_s": 60, "flip_count": 9317, "raw": "HOLD:0060s FLIPS:00002465"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:15:44.363681+00:00", "ts_unix": 1775319344.363681, "hold_s": 60, "flip_count": 9296, "raw": "HOLD:0060s FLIPS:00002450"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:16:45.256585+00:00", "ts_unix": 1775319405.2565851, "hold_s": 60, "flip_count": 9279, "raw": "HOLD:0060s FLIPS:0000243F"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:17:46.150558+00:00", "ts_unix": 1775319466.1505582, "hold_s": 60, "flip_count": 9264, "raw": "HOLD:0060s FLIPS:00002430"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:18:47.044346+00:00", "ts_unix": 1775319527.0443456, "hold_s": 60, "flip_count": 9198, "raw": "HOLD:0060s FLIPS:000023EE"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:19:47.938208+00:00", "ts_unix": 1775319587.9382076, "hold_s": 60, "flip_count": 9200, "raw": "HOLD:0060s FLIPS:000023F0"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:20:48.832184+00:00", "ts_unix": 1775319648.8321836, "hold_s": 60, "flip_count": 9197, "raw": "HOLD:0060s FLIPS:000023ED"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:21:49.725448+00:00", "ts_unix": 1775319709.7254477, "hold_s": 60, "flip_count": 9132, "raw": "HOLD:0060s FLIPS:000023AC"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:22:50.634675+00:00", "ts_unix": 1775319770.634675, "hold_s": 60, "flip_count": 9102, "raw": "HOLD:0060s FLIPS:0000238E"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:23:51.527996+00:00", "ts_unix": 1775319831.5279956, "hold_s": 60, "flip_count": 9051, "raw": "HOLD:0060s FLIPS:0000235B"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:24:52.421943+00:00", "ts_unix": 1775319892.421943, "hold_s": 60, "flip_count": 9071, "raw": "HOLD:0060s FLIPS:0000236F"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:25:53.315822+00:00", "ts_unix": 1775319953.315822, "hold_s": 60, "flip_count": 9074, "raw": "HOLD:0060s FLIPS:00002372"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:26:54.219800+00:00", "ts_unix": 1775320014.2198002, "hold_s": 60, "flip_count": 9077, "raw": "HOLD:0060s FLIPS:00002375"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:27:55.102891+00:00", "ts_unix": 1775320075.1028914, "hold_s": 60, "flip_count": 9079, "raw": "HOLD:0060s FLIPS:00002377"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:28:55.996909+00:00", "ts_unix": 1775320135.996909, "hold_s": 60, "flip_count": 9081, "raw": "HOLD:0060s FLIPS:00002379"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:29:56.890400+00:00", "ts_unix": 1775320196.8904002, "hold_s": 60, "flip_count": 9062, "raw": "HOLD:0060s FLIPS:00002366"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:30:57.783106+00:00", "ts_unix": 1775320257.7831063, "hold_s": 60, "flip_count": 9092, "raw": "HOLD:0060s FLIPS:00002384"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:31:58.677795+00:00", "ts_unix": 1775320318.677795, "hold_s": 60, "flip_count": 9060, "raw": "HOLD:0060s FLIPS:00002364"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:32:59.571435+00:00", "ts_unix": 1775320379.5714347, "hold_s": 60, "flip_count": 8997, "raw": "HOLD:0060s FLIPS:00002325"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:34:00.464706+00:00", "ts_unix": 1775320440.4647064, "hold_s": 60, "flip_count": 8941, "raw": "HOLD:0060s FLIPS:000022ED"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:35:01.358722+00:00", "ts_unix": 1775320501.3587217, "hold_s": 60, "flip_count": 8813, "raw": "HOLD:0060s FLIPS:0000226D"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:36:02.252532+00:00", "ts_unix": 1775320562.2525322, "hold_s": 60, "flip_count": 8519, "raw": "HOLD:0060s FLIPS:00002147"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:37:03.145142+00:00", "ts_unix": 1775320623.1451418, "hold_s": 60, "flip_count": 8437, "raw": "HOLD:0060s FLIPS:000020F5"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:38:04.039330+00:00", "ts_unix": 1775320684.03933, "hold_s": 60, "flip_count": 8226, "raw": "HOLD:0060s FLIPS:00002022"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:39:04.933355+00:00", "ts_unix": 1775320744.933355, "hold_s": 60, "flip_count": 8086, "raw": "HOLD:0060s FLIPS:00001F96"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:40:05.826874+00:00", "ts_unix": 1775320805.8268738, "hold_s": 60, "flip_count": 8060, "raw": "HOLD:0060s FLIPS:00001F7C"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:41:06.720356+00:00", "ts_unix": 1775320866.720356, "hold_s": 60, "flip_count": 8068, "raw": "HOLD:0060s FLIPS:00001F84"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:42:07.613260+00:00", "ts_unix": 1775320927.6132603, "hold_s": 60, "flip_count": 8074, "raw": "HOLD:0060s FLIPS:00001F8A"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:43:08.507281+00:00", "ts_unix": 1775320988.5072806, "hold_s": 60, "flip_count": 8099, "raw": "HOLD:0060s FLIPS:00001FA3"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:44:09.400869+00:00", "ts_unix": 1775321049.4008694, "hold_s": 60, "flip_count": 8157, "raw": "HOLD:0060s FLIPS:00001FDD"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:45:10.294333+00:00", "ts_unix": 1775321110.294333, "hold_s": 60, "flip_count": 8144, "raw": "HOLD:0060s FLIPS:00001FD0"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:46:11.188502+00:00", "ts_unix": 1775321171.1885016, "hold_s": 60, "flip_count": 8193, "raw": "HOLD:0060s FLIPS:00002001"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:47:12.082366+00:00", "ts_unix": 1775321232.082366, "hold_s": 60, "flip_count": 8201, "raw": "HOLD:0060s FLIPS:00002009"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:48:12.975713+00:00", "ts_unix": 1775321292.975713, "hold_s": 60, "flip_count": 8209, "raw": "HOLD:0060s FLIPS:00002011"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:49:13.869664+00:00", "ts_unix": 1775321353.8696644, "hold_s": 60, "flip_count": 8207, "raw": "HOLD:0060s FLIPS:0000200F"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:50:14.762431+00:00", "ts_unix": 1775321414.7624307, "hold_s": 60, "flip_count": 8206, "raw": "HOLD:0060s FLIPS:0000200E"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:51:15.655955+00:00", "ts_unix": 1775321475.6559553, "hold_s": 60, "flip_count": 8225, "raw": "HOLD:0060s FLIPS:00002021"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:52:16.550889+00:00", "ts_unix": 1775321536.5508888, "hold_s": 60, "flip_count": 8214, "raw": "HOLD:0060s FLIPS:00002016"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:53:17.443516+00:00", "ts_unix": 1775321597.4435165, "hold_s": 60, "flip_count": 8245, "raw": "HOLD:0060s FLIPS:00002035"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:54:18.337281+00:00", "ts_unix": 1775321658.3372815, "hold_s": 60, "flip_count": 8300, "raw": "HOLD:0060s FLIPS:0000206C"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:55:19.231096+00:00", "ts_unix": 1775321719.2310958, "hold_s": 60, "flip_count": 8298, "raw": "HOLD:0060s FLIPS:0000206A"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:56:20.124530+00:00", "ts_unix": 1775321780.1245298, "hold_s": 60, "flip_count": 8272, "raw": "HOLD:0060s FLIPS:00002050"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:57:21.018569+00:00", "ts_unix": 1775321841.0185692, "hold_s": 60, "flip_count": 8293, "raw": "HOLD:0060s FLIPS:00002065"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:58:21.912359+00:00", "ts_unix": 1775321901.9123588, "hold_s": 60, "flip_count": 8351, "raw": "HOLD:0060s FLIPS:0000209F"}
+{"type": "FLIP", "timestamp": "2026-04-04T16:59:22.805599+00:00", "ts_unix": 1775321962.8055987, "hold_s": 60, "flip_count": 8358, "raw": "HOLD:0060s FLIPS:000020A6"}
+{"type": "FLIP", "timestamp": "2026-04-04T17:00:23.699753+00:00", "ts_unix": 1775322023.6997533, "hold_s": 60, "flip_count": 8455, "raw": "HOLD:0060s FLIPS:00002107"}
+{"type": "FLIP", "timestamp": "2026-04-04T17:01:24.593258+00:00", "ts_unix": 1775322084.593258, "hold_s": 60, "flip_count": 8464, "raw": "HOLD:0060s FLIPS:00002110"}
+{"type": "FLIP", "timestamp": "2026-04-04T17:02:25.486851+00:00", "ts_unix": 1775322145.4868512, "hold_s": 60, "flip_count": 8467, "raw": "HOLD:0060s FLIPS:00002113"}
+{"type": "FLIP", "timestamp": "2026-04-04T17:03:26.384378+00:00", "ts_unix": 1775322206.3843784, "hold_s": 60, "flip_count": 8405, "raw": "HOLD:0060s FLIPS:000020D5"}
+{"type": "FLIP", "timestamp": "2026-04-04T17:04:27.274192+00:00", "ts_unix": 1775322267.2741923, "hold_s": 60, "flip_count": 8360, "raw": "HOLD:0060s FLIPS:000020A8"}
+{"type": "FLIP", "timestamp": "2026-04-04T17:05:28.168015+00:00", "ts_unix": 1775322328.1680145, "hold_s": 60, "flip_count": 8250, "raw": "HOLD:0060s FLIPS:0000203A"}
+{"type": "NOTE", "timestamp": "2026-04-04T17:05:30.886702+00:00", "ts_unix": 1775322330.8867023, "text": "Board temp 94.6 F"}
+{"type": "NOTE", "timestamp": "2026-04-04T17:05:57.353493+00:00", "ts_unix": 1775322357.3534927, "text": "Turned the board sideways"}
+{"type": "FLIP", "timestamp": "2026-04-04T17:06:29.060848+00:00", "ts_unix": 1775322389.0608482, "hold_s": 60, "flip_count": 8280, "raw": "HOLD:0060s FLIPS:00002058"}
+{"type": "FLIP", "timestamp": "2026-04-04T17:07:29.955042+00:00", "ts_unix": 1775322449.9550424, "hold_s": 60, "flip_count": 8248, "raw": "HOLD:0060s FLIPS:00002038"}
+{"type": "FLIP", "timestamp": "2026-04-04T17:08:30.848696+00:00", "ts_unix": 1775322510.8486962, "hold_s": 60, "flip_count": 8166, "raw": "HOLD:0060s FLIPS:00001FE6"}
+{"type": "FLIP", "timestamp": "2026-04-04T17:09:31.742196+00:00", "ts_unix": 1775322571.742196, "hold_s": 60, "flip_count": 8196, "raw": "HOLD:0060s FLIPS:00002004"}
+{"type": "NOTE", "timestamp": "2026-04-04T17:10:13.540575+00:00", "ts_unix": 1775322613.5405746, "text": "Board temp 95"}
