@@ -1,0 +1,10 @@
+# experiment: baseline
+# description: Room temp, refresh OFF, sideways
+# start_time: 2026-04-03T22:19:33.492692+00:00
+timestamp,iteration,hold_s,refresh_rate,flip_count,experiment
+2026-04-03T22:20:34.390985+00:00,1,60,OFF,15121,baseline
+2026-04-03T22:21:35.284222+00:00,2,60,OFF,13216,baseline
+2026-04-03T22:22:36.178705+00:00,3,60,OFF,12358,baseline
+2026-04-03T22:23:37.071393+00:00,4,60,OFF,11911,baseline
+2026-04-03T22:24:37.965108+00:00,5,60,OFF,11673,baseline
+2026-04-03T22:25:38.860529+00:00,6,60,OFF,11435,baseline

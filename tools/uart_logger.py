@@ -35,6 +35,7 @@ except ImportError:
 # Constants
 # ---------------------------------------------------------------------------
 
+# HOLD:NNNNs FLIPS:XXXXXXXX  (firmware now outputs 4-digit decimal hold time)
 FLIP_RE    = re.compile(r'HOLD:(\d+)s FLIPS:([0-9A-Fa-f]{8})')
 REFRESH_RE = re.compile(r'REFRESH:(OFF|SLOW|NORM|FAST)')
 INTV_RE    = re.compile(r'INTERVAL:(\d+)s')
@@ -102,6 +103,16 @@ class SerialReader(threading.Thread):
                 if self._ser and self._ser.is_open:
                     self._ser.close()
                 time.sleep(3)
+
+    def write(self, data: bytes) -> bool:
+        """Send bytes to the board. Returns False if not connected."""
+        if self._ser and self._ser.is_open:
+            try:
+                self._ser.write(data)
+                return True
+            except Exception:
+                return False
+        return False
 
     def close(self):
         self.stop.set()
@@ -372,6 +383,41 @@ def replay(jsonl_path, store, plotter, args):
 
 
 # ---------------------------------------------------------------------------
+# Stdin command thread
+# ---------------------------------------------------------------------------
+
+def stdin_command_thread(reader, stop_event):
+    """
+    Reads lines from stdin.  A bare integer (1-9999) sends "H<N>\\n" to the
+    board, which updates the hold time without requiring a button press.
+    Runs as a daemon thread so it dies automatically on Ctrl-C.
+    """
+    print('[cmd] Type a hold time in seconds (1-9999) and press Enter to send to board.',
+          flush=True)
+    while not stop_event.is_set():
+        try:
+            line = input()
+        except EOFError:
+            break
+        line = line.strip()
+        if not line:
+            continue
+        if not line.isdigit():
+            print('\n[cmd] Enter a positive integer (seconds, 1-9999)', flush=True)
+            continue
+        val = int(line)
+        if val < 1 or val > 9999:
+            print('\n[cmd] Hold time must be 1-9999 seconds', flush=True)
+            continue
+        cmd = f'H{val}\n'.encode('ascii')
+        if reader.write(cmd):
+            print(f'\n[cmd] Sent H{val} — board will confirm with INTERVAL:{val:04d}s',
+                  flush=True)
+        else:
+            print('\n[cmd] Not connected — command not sent', flush=True)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -408,6 +454,10 @@ def main():
     reader = SerialReader(args.port, args.baud, line_queue, stop_event)
     reader.start()
     plotter.start()
+
+    cmd_thread = threading.Thread(
+        target=stdin_command_thread, args=(reader, stop_event), daemon=True)
+    cmd_thread.start()
 
     print(f'\n[logger] Listening on {args.port}. Press Ctrl-C to stop.\n', flush=True)
 

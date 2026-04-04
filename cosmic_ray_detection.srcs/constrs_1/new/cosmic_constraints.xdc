@@ -20,9 +20,14 @@ set_property IOSTANDARD LVCMOS33 [get_ports led0]
 set_property PACKAGE_PIN F13 [get_ports led1]
 set_property IOSTANDARD LVCMOS33 [get_ports led1]
 
-# UART TX - R12, bank 14, LVCMOS33
+# UART TX - R12, bank 14, LVCMOS33 (FPGA -> host)
 set_property PACKAGE_PIN R12 [get_ports uart_txd]
 set_property IOSTANDARD LVCMOS33 [get_ports uart_txd]
+
+# UART RX - V12, bank 14, LVCMOS33 (host -> FPGA via FTDI)
+set_property PACKAGE_PIN V12 [get_ports uart_rxd]
+set_property IOSTANDARD LVCMOS33 [get_ports uart_rxd]
+set_property PULLUP true [get_ports uart_rxd]
 
 set_property INTERNAL_VREF 0.675 [get_iobanks 34]
 set_property CLOCK_DEDICATED_ROUTE FALSE [get_nets u_bd/cosmic_bd_i/clk_wiz_0/inst/clk_in1_cosmic_bd_clk_wiz_0_0]

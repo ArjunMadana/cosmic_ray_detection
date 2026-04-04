@@ -118,12 +118,31 @@ python tools/uart_logger.py --replay data/cosmic_test_01_20260403_142200.jsonl
 
 ---
 
+## Changing hold time from the laptop
+
+While the logger is running, type a number of seconds and press Enter:
+
+```
+45
+[cmd] Sent H45 — board will confirm with INTERVAL:0045s
+```
+
+The board responds with `INTERVAL:0045s` confirming the change, then uses the new hold time from the next cycle onward.  Range: **1–9999 seconds**.  Physical buttons still work as a fallback and override any laptop-set value.
+
+---
+
 ## UART message reference
 
 Messages the FPGA sends (firmware: `detector_fsm.v`):
 
 | Message | Example | Trigger |
 |---|---|---|
-| FLIP result | `HOLD:05s FLIPS:00000ABC` | End of every SCAN cycle |
+| FLIP result | `HOLD:0005s FLIPS:00000ABC` | End of every SCAN cycle |
 | Refresh change | `REFRESH:OFF` / `SLOW` / `NORM` / `FAST` | SW0/SW1 toggled |
-| Interval change | `INTERVAL:05s` | Button pressed |
+| Interval change | `INTERVAL:0045s` | Button pressed or laptop command |
+
+Messages the laptop sends (firmware: `uart_rx.v` + `detector_fsm.v`):
+
+| Message | Example | Effect |
+|---|---|---|
+| Hold time command | `H45\n` | Sets hold to 45 s |

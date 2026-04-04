@@ -50,7 +50,8 @@
             
         // UART
         output wire        uart_txd,
-    
+        input  wire        uart_rxd,
+
         // LEDs
         output wire        led0,
         output wire        led1
@@ -84,6 +85,8 @@
     wire [7:0]  uart_data;
     wire        uart_valid;
     wire        uart_ready;
+    wire [7:0]  rx_data;
+    wire        rx_valid;
     
     wire reset;
     assign reset = 1'b0;  // never assert reset, use red button instead
@@ -170,16 +173,18 @@
         .uart_data      (uart_data),
         .uart_valid     (uart_valid),
         .uart_ready     (uart_ready),
+        .rx_data        (rx_data),
+        .rx_valid       (rx_valid),
         .led0           (led0),
-        .btn0 (btn0),
-        .btn1 (btn1),
-        .btn2 (btn2),
-        .btn3 (btn3),
-        .led1 (led1)
+        .btn0           (btn0),
+        .btn1           (btn1),
+        .btn2           (btn2),
+        .btn3           (btn3),
+        .led1           (led1)
     );
     
-    // UART
-    uart_tx u_uart (
+    // UART TX
+    uart_tx u_uart_tx (
         .clk   (ui_clk),
         .rst   (fsm_rst),
         .data  (uart_data),
@@ -187,5 +192,17 @@
         .ready (uart_ready),
         .tx    (uart_txd)
     );
-    
+
+    // UART RX — receives hold-time commands from laptop
+    uart_rx #(
+        .CLK_FREQ  (150_000_000),
+        .BAUD_RATE (115_200)
+    ) u_uart_rx (
+        .clk   (ui_clk),
+        .rst   (fsm_rst),
+        .rx    (uart_rxd),
+        .data  (rx_data),
+        .valid (rx_valid)
+    );
+
     endmodule

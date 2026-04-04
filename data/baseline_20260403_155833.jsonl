@@ -1,0 +1,2 @@
+{"type": "FLIP", "timestamp": "2026-04-03T20:58:35.501463+00:00", "ts_unix": 1775249915.5014634, "hold_s": 5, "flip_count": 0, "raw": "HOLD:0005s FLIPS:00000000"}
+{"type": "FLIP", "timestamp": "2026-04-03T20:58:39.188101+00:00", "ts_unix": 1775249919.188101, "hold_s": 5, "flip_count": 0, "raw": "HOLD:0005s FLIPS:00000000"}

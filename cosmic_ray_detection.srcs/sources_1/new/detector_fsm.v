@@ -1,22 +1,15 @@
 `timescale 1ns / 1ps
 //////////////////////////////////////////////////////////////////////////////////
-// Company: 
-// Engineer: 
-// 
-// Create Date: 03/05/2026 09:07:06 PM
-// Design Name: 
 // Module Name: detector_fsm
-// Project Name: 
-// Target Devices: 
-// Tool Versions: 
-// Description: 
-// 
-// Dependencies: 
-// 
-// Revision:
-// Revision 0.01 - File Created
-// Additional Comments:
-// 
+// Description: Main FSM for DRAM bit-flip detection.
+//              Hold time can be set via physical buttons (fallback) or by
+//              sending an ASCII command over UART RX: "H<seconds>\n"
+//              e.g. "H45\n" sets a 45-second hold.  Range: 1-9999 seconds.
+//
+//              UART output format:
+//                HOLD:NNNNs FLIPS:XXXXXXXX\r\n   (27 bytes, NNNN = 4-digit decimal)
+//                REFRESH:XXXX\r\n
+//                INTERVAL:NNNNs\r\n
 //////////////////////////////////////////////////////////////////////////////////
 
 module detector_fsm #(
@@ -56,16 +49,20 @@ module detector_fsm #(
     input  wire        rvalid,
     output reg         rready,
 
-    // UART output
+    // UART TX output
     output reg  [7:0]  uart_data,
     output reg         uart_valid,
     input  wire        uart_ready,
+
+    // UART RX input (from laptop)
+    input  wire [7:0]  rx_data,
+    input  wire        rx_valid,
 
     // Status
     output reg         led0,
     output reg         led1,
 
-    // Buttons (btn0=K16=10s, btn1=J16=20s, btn2=H15=30s, default=5s)
+    // Buttons (btn0=K16=10s, btn1=J16=20s, btn2=H15=30s, btn3=G15=5s default)
     input wire         btn0,
     input wire         btn1,
     input wire         btn2,
@@ -91,15 +88,25 @@ localparam CYCLES_10S = 64'd833_333_330;    // 10s at 83.333 MHz
 localparam CYCLES_20S = 64'd1_666_666_660;  // 20s at 83.333 MHz
 localparam CYCLES_30S = 64'd2_499_999_990;  // 30s at 83.333 MHz
 
+localparam CLK_PER_SEC = 64'd150_000_000;   // ui_clk frequency (matches uart_tx CLK_FREQ)
+
+localparam PATTERN = 32'hFFFFFFFF;
+//localparam PATTERN = 32'h00000000;
+
 reg [2:0]  state;
 reg [27:0] addr;
 reg [31:0] hit_counter;
 reg [31:0] report_shift;
-reg [4:0]  report_idx;   // widened to 5 bits
+reg [4:0]  report_idx;
 reg [63:0] hold_counter;
 reg [63:0] hold_cycles_sel;
-reg [1:0]  time_sel;     // 0=5s, 1=10s, 2=20s, 3=30s
-reg [3:0] btn_prev;  // previous button state for edge detection
+
+// Hold time in whole seconds (1-9999).  Buttons set known values;
+// UART command sets any value in range.
+reg [15:0] hold_sec_val;
+
+reg [3:0]  btn_prev;
+reg        btn_changed;
 
 reg [31:0] refresh_counter;
 reg [31:0] refresh_period;
@@ -109,64 +116,102 @@ reg [1:0]  sw_prev;
 reg        sw_changed;
 reg [1:0]  sw_print_val;
 
-reg        btn_changed;
+// UART RX command parser state
+reg        cmd_active;   // currently inside an 'H...' command
+reg [15:0] cmd_acc;      // accumulates decimal digit value
 
-localparam PATTERN = 32'hFFFFFFFF;
-//localparam PATTERN = 32'h00000000;
+// Combinational BCD breakdown of hold_sec_val for printing
+wire [3:0] dig3 = hold_sec_val / 1000;
+wire [3:0] dig2 = (hold_sec_val % 1000) / 100;
+wire [3:0] dig1 = (hold_sec_val % 100) / 10;
+wire [3:0] dig0 = hold_sec_val % 10;
 
 always @(posedge clk) begin
     if (rst) begin
-        state          <= WAIT_INIT;
-        addr           <= 0;
-        hit_counter    <= 0;
-        awvalid        <= 0;
-        wvalid         <= 0;
-        bready         <= 1;
-        arvalid        <= 0;
-        rready         <= 1;
-        uart_valid     <= 0;
-        led0           <= 0;
-        led1           <= 0;
-        hold_counter   <= 0;
+        state           <= WAIT_INIT;
+        addr            <= 0;
+        hit_counter     <= 0;
+        awvalid         <= 0;
+        wvalid          <= 0;
+        bready          <= 1;
+        arvalid         <= 0;
+        rready          <= 1;
+        uart_valid      <= 0;
+        led0            <= 0;
+        led1            <= 0;
+        hold_counter    <= 0;
         hold_cycles_sel <= CYCLES_5S;
-        time_sel       <= 0;
-        btn_prev       <= 4'b0;
-        sw_prev        <= 2'b0;
-        sw_changed     <= 0;
-        sw_print_val   <= 2'b0;
-        btn_changed    <= 0;
+        hold_sec_val    <= 16'd5;
+        btn_prev        <= 4'b0;
+        sw_prev         <= 2'b0;
+        sw_changed      <= 0;
+        sw_print_val    <= 2'b0;
+        btn_changed     <= 0;
+        cmd_active      <= 0;
+        cmd_acc         <= 0;
     end else begin
         led0 <= calib_complete;
         led1 <= (state != WAIT_INIT);
 
-        // Button selection works in any state
+        // ----------------------------------------------------------------
+        // Button edge detection — works in any state
+        // ----------------------------------------------------------------
         btn_prev <= {btn3, btn2, btn1, btn0};
-        
+
         if (btn3 && !btn_prev[3]) begin
+            hold_sec_val    <= 16'd5;
             hold_cycles_sel <= CYCLES_5S;
-            time_sel        <= 0;
             btn_changed     <= 1;
         end else if (btn2 && !btn_prev[2]) begin
+            hold_sec_val    <= 16'd30;
             hold_cycles_sel <= CYCLES_30S;
-            time_sel        <= 3;
             btn_changed     <= 1;
         end else if (btn1 && !btn_prev[1]) begin
+            hold_sec_val    <= 16'd20;
             hold_cycles_sel <= CYCLES_20S;
-            time_sel        <= 2;
             btn_changed     <= 1;
         end else if (btn0 && !btn_prev[0]) begin
+            hold_sec_val    <= 16'd10;
             hold_cycles_sel <= CYCLES_10S;
-            time_sel        <= 1;
             btn_changed     <= 1;
         end
-    
+
+        // ----------------------------------------------------------------
+        // UART RX command parser — "H<decimal_seconds>\n"
+        // Operates independently of FSM state.
+        // ----------------------------------------------------------------
+        if (rx_valid) begin
+            if (rx_data == "H") begin
+                cmd_active <= 1;
+                cmd_acc    <= 0;
+            end else if (cmd_active && rx_data >= "0" && rx_data <= "9") begin
+                // Accept up to 4 digits (max 9999)
+                if (cmd_acc < 16'd1000)
+                    cmd_acc <= (cmd_acc * 10) + {12'd0, rx_data[3:0]};
+            end else if (cmd_active && rx_data == 8'h0A) begin  // '\n'
+                cmd_active <= 0;
+                if (cmd_acc > 0) begin
+                    hold_sec_val    <= cmd_acc;
+                    hold_cycles_sel <= cmd_acc * CLK_PER_SEC;
+                    btn_changed     <= 1;   // triggers PRINT_INT confirmation
+                end
+            end else if (rx_data != 8'h0D) begin  // ignore '\r', cancel on anything else
+                cmd_active <= 0;
+            end
+        end
+
+        // ----------------------------------------------------------------
         // Switch change detection — works in any state
+        // ----------------------------------------------------------------
         sw_prev <= {sw1, sw0};
         if ({sw1, sw0} != sw_prev) begin
             sw_changed   <= 1;
             sw_print_val <= {sw1, sw0};
         end
 
+        // ----------------------------------------------------------------
+        // FSM
+        // ----------------------------------------------------------------
         case (state)
             WAIT_INIT: begin
                 if (calib_complete) begin
@@ -233,12 +278,13 @@ always @(posedge clk) begin
                 end
             end
 
-            // Output format: "HOLD:05s FLIPS:XXXXXXXX\r\n"
+            // Output format: "HOLD:NNNNs FLIPS:XXXXXXXX\r\n"  (27 bytes)
+            // NNNN = 4-digit zero-padded decimal hold time in seconds
             REPORT: begin
                 if (uart_ready && !uart_valid) begin
                     report_idx <= report_idx + 1;
 
-                    if (report_idx < 25)
+                    if (report_idx < 27)
                         uart_valid <= 1;
 
                     if      (report_idx == 0)  uart_data <= "H";
@@ -246,31 +292,19 @@ always @(posedge clk) begin
                     else if (report_idx == 2)  uart_data <= "L";
                     else if (report_idx == 3)  uart_data <= "D";
                     else if (report_idx == 4)  uart_data <= ":";
-                    else if (report_idx == 5) begin
-                        case (time_sel)
-                            2'd0: uart_data <= "0"; // 05s
-                            2'd1: uart_data <= "1"; // 10s
-                            2'd2: uart_data <= "2"; // 20s
-                            2'd3: uart_data <= "3"; // 30s
-                        endcase
-                    end
-                    else if (report_idx == 6) begin
-                        case (time_sel)
-                            2'd0: uart_data <= "5"; // 05s
-                            2'd1: uart_data <= "0"; // 10s
-                            2'd2: uart_data <= "0"; // 20s
-                            2'd3: uart_data <= "0"; // 30s
-                        endcase
-                    end
-                    else if (report_idx == 7)  uart_data <= "s";
-                    else if (report_idx == 8)  uart_data <= " ";
-                    else if (report_idx == 9)  uart_data <= "F";
-                    else if (report_idx == 10) uart_data <= "L";
-                    else if (report_idx == 11) uart_data <= "I";
-                    else if (report_idx == 12) uart_data <= "P";
-                    else if (report_idx == 13) uart_data <= "S";
-                    else if (report_idx == 14) uart_data <= ":";
-                    else if (report_idx <= 22) begin  // idx 15-22: 8 hex digits
+                    else if (report_idx == 5)  uart_data <= "0" + {4'd0, dig3};
+                    else if (report_idx == 6)  uart_data <= "0" + {4'd0, dig2};
+                    else if (report_idx == 7)  uart_data <= "0" + {4'd0, dig1};
+                    else if (report_idx == 8)  uart_data <= "0" + {4'd0, dig0};
+                    else if (report_idx == 9)  uart_data <= "s";
+                    else if (report_idx == 10) uart_data <= " ";
+                    else if (report_idx == 11) uart_data <= "F";
+                    else if (report_idx == 12) uart_data <= "L";
+                    else if (report_idx == 13) uart_data <= "I";
+                    else if (report_idx == 14) uart_data <= "P";
+                    else if (report_idx == 15) uart_data <= "S";
+                    else if (report_idx == 16) uart_data <= ":";
+                    else if (report_idx <= 24) begin  // idx 17-24: 8 hex digits
                         case (report_shift[31:28])
                             4'h0: uart_data <= "0"; 4'h1: uart_data <= "1";
                             4'h2: uart_data <= "2"; 4'h3: uart_data <= "3";
@@ -283,9 +317,9 @@ always @(posedge clk) begin
                         endcase
                         report_shift <= {report_shift[27:0], 4'b0};
                     end
-                    else if (report_idx == 23) uart_data <= 8'h0D;
-                    else if (report_idx == 24) uart_data <= 8'h0A;
-                    else if (report_idx == 25) begin
+                    else if (report_idx == 25) uart_data <= 8'h0D;
+                    else if (report_idx == 26) uart_data <= 8'h0A;
+                    else if (report_idx == 27) begin
                         uart_valid <= 0;
                         state      <= SETTLE;
                     end
@@ -295,17 +329,17 @@ always @(posedge clk) begin
             end
 
             SETTLE: begin
-                // Wait for any in-flight AXI responses to drain
-                awvalid     <= 0;
-                wvalid      <= 0;
-                arvalid     <= 0;
+                awvalid <= 0;
+                wvalid  <= 0;
+                arvalid <= 0;
                 if (!bvalid && !rvalid) begin
                     addr        <= 0;
                     hit_counter <= 0;
                     state       <= FILL;
                 end
             end
-            // Output format: "REFRESH:SLOW\r\n" (OFF /SLOW/NORM/FAST)
+
+            // Output format: "REFRESH:SLOW\r\n"  (OFF/SLOW/NORM/FAST)
             PRINT_REF: begin
                 if (uart_ready && !uart_valid) begin
                     report_idx <= report_idx + 1;
@@ -364,12 +398,12 @@ always @(posedge clk) begin
                 end
             end
 
-            // Output format: "INTERVAL:05s\r\n"
+            // Output format: "INTERVAL:NNNNs\r\n"  (16 bytes)
             PRINT_INT: begin
                 if (uart_ready && !uart_valid) begin
                     report_idx <= report_idx + 1;
 
-                    if (report_idx < 14)
+                    if (report_idx < 16)
                         uart_valid <= 1;
 
                     if      (report_idx == 0)  uart_data <= "I";
@@ -381,26 +415,14 @@ always @(posedge clk) begin
                     else if (report_idx == 6)  uart_data <= "A";
                     else if (report_idx == 7)  uart_data <= "L";
                     else if (report_idx == 8)  uart_data <= ":";
-                    else if (report_idx == 9) begin
-                        case (time_sel)
-                            2'd0: uart_data <= "0"; // 05s
-                            2'd1: uart_data <= "1"; // 10s
-                            2'd2: uart_data <= "2"; // 20s
-                            2'd3: uart_data <= "3"; // 30s
-                        endcase
-                    end
-                    else if (report_idx == 10) begin
-                        case (time_sel)
-                            2'd0: uart_data <= "5"; // 05s
-                            2'd1: uart_data <= "0"; // 10s
-                            2'd2: uart_data <= "0"; // 20s
-                            2'd3: uart_data <= "0"; // 30s
-                        endcase
-                    end
-                    else if (report_idx == 11) uart_data <= "s";
-                    else if (report_idx == 12) uart_data <= 8'h0D;
-                    else if (report_idx == 13) uart_data <= 8'h0A;
-                    else if (report_idx == 14) begin
+                    else if (report_idx == 9)  uart_data <= "0" + {4'd0, dig3};
+                    else if (report_idx == 10) uart_data <= "0" + {4'd0, dig2};
+                    else if (report_idx == 11) uart_data <= "0" + {4'd0, dig1};
+                    else if (report_idx == 12) uart_data <= "0" + {4'd0, dig0};
+                    else if (report_idx == 13) uart_data <= "s";
+                    else if (report_idx == 14) uart_data <= 8'h0D;
+                    else if (report_idx == 15) uart_data <= 8'h0A;
+                    else if (report_idx == 16) begin
                         uart_valid <= 0;
                         state      <= HOLD;
                     end
@@ -413,7 +435,9 @@ always @(posedge clk) begin
     end
 end
 
+// ----------------------------------------------------------------
 // Refresh tick generator — runs independently of FSM state
+// ----------------------------------------------------------------
 always @(posedge clk) begin
     if (rst) begin
         refresh_counter  <= 0;
@@ -429,7 +453,7 @@ always @(posedge clk) begin
             2'd3: refresh_period <= REF_FAST;
         endcase
 
-        refresh_tick_out <= 1'b0;  // default: single-cycle pulse
+        refresh_tick_out <= 1'b0;
         if (refresh_period != 0) begin
             if (refresh_counter >= refresh_period) begin
                 refresh_counter  <= 0;

@@ -1,0 +1,7 @@
+{"type": "INTERVAL", "timestamp": "2026-04-03T22:19:38.249552+00:00", "ts_unix": 1775254778.249552, "hold_s": 60, "raw": "INTERVAL:0060s"}
+{"type": "FLIP", "timestamp": "2026-04-03T22:20:34.390985+00:00", "ts_unix": 1775254834.3909845, "hold_s": 60, "flip_count": 15121, "raw": "HOLD:0060s FLIPS:00003B11"}
+{"type": "FLIP", "timestamp": "2026-04-03T22:21:35.284222+00:00", "ts_unix": 1775254895.2842216, "hold_s": 60, "flip_count": 13216, "raw": "HOLD:0060s FLIPS:000033A0"}
+{"type": "FLIP", "timestamp": "2026-04-03T22:22:36.178705+00:00", "ts_unix": 1775254956.1787055, "hold_s": 60, "flip_count": 12358, "raw": "HOLD:0060s FLIPS:00003046"}
+{"type": "FLIP", "timestamp": "2026-04-03T22:23:37.071393+00:00", "ts_unix": 1775255017.071393, "hold_s": 60, "flip_count": 11911, "raw": "HOLD:0060s FLIPS:00002E87"}
+{"type": "FLIP", "timestamp": "2026-04-03T22:24:37.965108+00:00", "ts_unix": 1775255077.965108, "hold_s": 60, "flip_count": 11673, "raw": "HOLD:0060s FLIPS:00002D99"}
+{"type": "FLIP", "timestamp": "2026-04-03T22:25:38.860529+00:00", "ts_unix": 1775255138.8605287, "hold_s": 60, "flip_count": 11435, "raw": "HOLD:0060s FLIPS:00002CAB"}
