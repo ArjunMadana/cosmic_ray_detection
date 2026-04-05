@@ -84,6 +84,7 @@ localparam PRINT_REF  = 4'd6;
 localparam PRINT_INT  = 4'd7;
 localparam PRINT_PAT  = 4'd8;
 localparam FILL2        = 4'd9;  // second write pass to ensure all cells are written
+localparam STREAM_ADDRS = 4'd10; // streams flip addresses over UART before REPORT
 localparam PRINT_READY  = 4'd12; // sends READY\r\n after MIG calibration
 localparam WAIT_GO      = 4'd13; // idles until G command received from Python
 
@@ -138,6 +139,13 @@ reg        pat_changed;   // triggers PRINT_PAT confirmation state
 reg        go_flag;       // set by G command — starts cycle from WAIT_GO
 reg        reset_flag;    // set by X command — aborts any state, returns to PRINT_READY
 
+// Flip address BRAM buffer — filled during SCAN, streamed in STREAM_ADDRS
+reg [27:0] addr_buf [0:4095];  // 4096 × 28-bit words (~16 KB BRAM)
+reg [11:0] buf_wr_ptr;         // write pointer (SCAN)
+reg [11:0] buf_rd_ptr;         // read pointer (STREAM_ADDRS)
+reg [11:0] buf_count;          // addresses stored this cycle (max 4095)
+reg        stream_body;        // 0=sending header, 1=sending address body
+
 // Combinational BCD breakdown of hold_sec_val for printing
 wire [3:0] dig3 = hold_sec_val / 1000;
 wire [3:0] dig2 = (hold_sec_val % 1000) / 100;
@@ -173,6 +181,10 @@ always @(posedge clk) begin
         fill_pattern_sel <= 2'd0;
         go_flag          <= 0;
         reset_flag       <= 0;
+        buf_wr_ptr       <= 0;
+        buf_rd_ptr       <= 0;
+        buf_count        <= 0;
+        stream_body      <= 0;
     end else begin
         led0 <= calib_complete;
         led1 <= (state != WAIT_INIT);
@@ -269,6 +281,10 @@ always @(posedge clk) begin
             wvalid      <= 0;
             arvalid     <= 0;
             report_idx  <= 0;
+            buf_wr_ptr  <= 0;
+            buf_rd_ptr  <= 0;
+            buf_count   <= 0;
+            stream_body <= 0;
             state       <= PRINT_READY;
         end else case (state)
             WAIT_INIT: begin
@@ -365,6 +381,8 @@ always @(posedge clk) begin
                     addr         <= 0;
                     hit_counter  <= 0;
                     hold_counter <= 0;
+                    buf_wr_ptr   <= 0;
+                    buf_count    <= 0;
                 end else begin
                     hold_counter <= hold_counter + 1;
                 end
@@ -377,15 +395,138 @@ always @(posedge clk) begin
                 end
                 if (arvalid && arready) arvalid <= 0;
                 if (rvalid) begin
-                    if (rdata != active_pattern)
+                    if (rdata != active_pattern) begin
                         hit_counter <= hit_counter + 1;
+                        if (buf_count < 12'd4095) begin
+                            addr_buf[buf_wr_ptr] <= addr;
+                            buf_wr_ptr           <= buf_wr_ptr + 1;
+                            buf_count            <= buf_count + 1;
+                        end
+                    end
                     if (addr >= MEM_SIZE - 4) begin
-                        state        <= REPORT;
+                        state        <= STREAM_ADDRS;
                         report_shift <= hit_counter;
                         report_idx   <= 0;
+                        buf_rd_ptr   <= 0;
+                        stream_body  <= 0;
                     end else begin
                         addr <= addr + 4;
                     end
+                end
+            end
+
+            // Output format: "ADDRS:NNNN\r\n" header (12 bytes) then one "XXXXXXX\r\n" per address (9 bytes each)
+            // NNNN = 4 hex digits of buf_count (always "0" in top digit since max = 4095 = 0x0FFF)
+            // XXXXXXX = 7 hex digits of 28-bit byte address
+            // Timing: buf_rd_ptr was set (SCAN→STREAM_ADDRS) before header starts.
+            //         BRAM output addr_buf[buf_rd_ptr] is valid by the time body phase begins.
+            //         In body: idx=0 loads shift register, idx=1-7 transmit 7 nibbles, idx=8 CR, idx=9 LF+advance.
+            STREAM_ADDRS: begin
+                if (uart_ready && !uart_valid) begin
+                    if (!stream_body) begin
+                        // ---- HEADER: ADDRS:NNNN\r\n ----
+                        report_idx <= report_idx + 1;
+                        if (report_idx < 12) uart_valid <= 1;
+                        if      (report_idx == 0)  uart_data <= "A";
+                        else if (report_idx == 1)  uart_data <= "D";
+                        else if (report_idx == 2)  uart_data <= "D";
+                        else if (report_idx == 3)  uart_data <= "R";
+                        else if (report_idx == 4)  uart_data <= "S";
+                        else if (report_idx == 5)  uart_data <= ":";
+                        else if (report_idx == 6)  uart_data <= "0";  // top nibble always 0 (max 4095)
+                        else if (report_idx == 7) begin
+                            case (buf_count[11:8])
+                                4'h0: uart_data <= "0"; 4'h1: uart_data <= "1";
+                                4'h2: uart_data <= "2"; 4'h3: uart_data <= "3";
+                                4'h4: uart_data <= "4"; 4'h5: uart_data <= "5";
+                                4'h6: uart_data <= "6"; 4'h7: uart_data <= "7";
+                                4'h8: uart_data <= "8"; 4'h9: uart_data <= "9";
+                                4'hA: uart_data <= "A"; 4'hB: uart_data <= "B";
+                                4'hC: uart_data <= "C"; 4'hD: uart_data <= "D";
+                                4'hE: uart_data <= "E"; 4'hF: uart_data <= "F";
+                            endcase
+                        end
+                        else if (report_idx == 8) begin
+                            case (buf_count[7:4])
+                                4'h0: uart_data <= "0"; 4'h1: uart_data <= "1";
+                                4'h2: uart_data <= "2"; 4'h3: uart_data <= "3";
+                                4'h4: uart_data <= "4"; 4'h5: uart_data <= "5";
+                                4'h6: uart_data <= "6"; 4'h7: uart_data <= "7";
+                                4'h8: uart_data <= "8"; 4'h9: uart_data <= "9";
+                                4'hA: uart_data <= "A"; 4'hB: uart_data <= "B";
+                                4'hC: uart_data <= "C"; 4'hD: uart_data <= "D";
+                                4'hE: uart_data <= "E"; 4'hF: uart_data <= "F";
+                            endcase
+                        end
+                        else if (report_idx == 9) begin
+                            case (buf_count[3:0])
+                                4'h0: uart_data <= "0"; 4'h1: uart_data <= "1";
+                                4'h2: uart_data <= "2"; 4'h3: uart_data <= "3";
+                                4'h4: uart_data <= "4"; 4'h5: uart_data <= "5";
+                                4'h6: uart_data <= "6"; 4'h7: uart_data <= "7";
+                                4'h8: uart_data <= "8"; 4'h9: uart_data <= "9";
+                                4'hA: uart_data <= "A"; 4'hB: uart_data <= "B";
+                                4'hC: uart_data <= "C"; 4'hD: uart_data <= "D";
+                                4'hE: uart_data <= "E"; 4'hF: uart_data <= "F";
+                            endcase
+                        end
+                        else if (report_idx == 10) uart_data <= 8'h0D;
+                        else if (report_idx == 11) uart_data <= 8'h0A;
+                        else if (report_idx == 12) begin
+                            uart_valid <= 0;
+                            report_idx <= 0;
+                            if (buf_count == 0) begin
+                                report_shift <= hit_counter;  // restore for REPORT
+                                state        <= REPORT;
+                            end else begin
+                                stream_body <= 1;
+                            end
+                        end
+                    end else begin
+                        // ---- BODY: one "XXXXXXX\r\n" per address ----
+                        // idx=0: load shift register from BRAM output (no transmit)
+                        // idx=1-7: transmit 7 hex nibbles MSB-first
+                        // idx=8: CR, idx=9: LF + advance buf_rd_ptr
+                        // idx=10: transition to next address or REPORT
+                        if (report_idx == 0) begin
+                            report_shift <= {4'd0, addr_buf[buf_rd_ptr]};
+                            uart_valid   <= 0;
+                            report_idx   <= 1;
+                        end else if (report_idx >= 1 && report_idx <= 7) begin
+                            uart_valid   <= 1;
+                            case (report_shift[27:24])
+                                4'h0: uart_data <= "0"; 4'h1: uart_data <= "1";
+                                4'h2: uart_data <= "2"; 4'h3: uart_data <= "3";
+                                4'h4: uart_data <= "4"; 4'h5: uart_data <= "5";
+                                4'h6: uart_data <= "6"; 4'h7: uart_data <= "7";
+                                4'h8: uart_data <= "8"; 4'h9: uart_data <= "9";
+                                4'hA: uart_data <= "A"; 4'hB: uart_data <= "B";
+                                4'hC: uart_data <= "C"; 4'hD: uart_data <= "D";
+                                4'hE: uart_data <= "E"; 4'hF: uart_data <= "F";
+                            endcase
+                            report_shift <= {report_shift[23:0], 4'b0};
+                            report_idx   <= report_idx + 1;
+                        end else if (report_idx == 8) begin
+                            uart_valid <= 1;
+                            uart_data  <= 8'h0D;
+                            report_idx <= 9;
+                        end else if (report_idx == 9) begin
+                            uart_valid <= 1;
+                            uart_data  <= 8'h0A;
+                            buf_rd_ptr <= buf_rd_ptr + 1;
+                            report_idx <= 10;
+                        end else if (report_idx == 10) begin
+                            uart_valid <= 0;
+                            report_idx <= 0;
+                            if (buf_rd_ptr >= buf_count) begin
+                                stream_body  <= 0;
+                                report_shift <= hit_counter;  // restore for REPORT
+                                state        <= REPORT;
+                            end
+                        end
+                    end
+                end else begin
+                    uart_valid <= 0;
                 end
             end
 

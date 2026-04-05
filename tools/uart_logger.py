@@ -38,11 +38,13 @@ except ImportError:
 # Constants
 # ---------------------------------------------------------------------------
 
-FLIP_RE    = re.compile(r'HOLD:(\d+)s PAT:([0-9A-Fa-f]{2}) FLIPS:([0-9A-Fa-f]{8})')
-REFRESH_RE = re.compile(r'REFRESH:(OFF|SLOW|NORM|FAST)')
-INTV_RE    = re.compile(r'INTERVAL:(\d+)s')
-PATTERN_RE = re.compile(r'PATTERN:(FF|00|55|AA)')
-READY_RE   = re.compile(r'^READY$')
+FLIP_RE      = re.compile(r'HOLD:(\d+)s PAT:([0-9A-Fa-f]{2}) FLIPS:([0-9A-Fa-f]{8})')
+REFRESH_RE   = re.compile(r'REFRESH:(OFF|SLOW|NORM|FAST)')
+INTV_RE      = re.compile(r'INTERVAL:(\d+)s')
+PATTERN_RE   = re.compile(r'PATTERN:(FF|00|55|AA)')
+READY_RE     = re.compile(r'^READY$')
+ADDRS_HDR_RE = re.compile(r'^ADDRS:([0-9A-Fa-f]{4})$')
+ADDR_LINE_RE = re.compile(r'^([0-9A-Fa-f]{7})$')
 
 HOLD_COLORS = {5: '#4CAF50', 10: '#2196F3', 20: '#FF9800', 30: '#F44736'}
 REFRESH_LABEL = {'OFF': 'Refresh OFF', 'SLOW': 'Slow (~100ms)',
@@ -135,6 +137,10 @@ def parse_line(raw_bytes, ts_unix):
                 'pattern': m.group(1).upper(), 'raw': line}
     if READY_RE.search(line):
         return {'type': 'READY', 'timestamp': ts, 'ts_unix': ts_unix, 'raw': line}
+    m = ADDRS_HDR_RE.match(line)
+    if m:
+        return {'type': 'ADDRS_HDR', 'timestamp': ts, 'ts_unix': ts_unix,
+                'count': int(m.group(1), 16), 'raw': line}
     return None
 
 # ---------------------------------------------------------------------------
@@ -238,6 +244,66 @@ class HangDetector:
 # ---------------------------------------------------------------------------
 # GUI application
 # ---------------------------------------------------------------------------
+# Background model
+# ---------------------------------------------------------------------------
+
+class BackgroundModel:
+    def __init__(self, hot_threshold=0.5, rare_threshold=0.1, min_cycles=20):
+        self._counts        = {}   # addr -> number of cycles it has flipped
+        self._n_cycles      = 0
+        self.hot_threshold  = hot_threshold
+        self.rare_threshold = rare_threshold
+        self.min_cycles     = min_cycles
+
+    def update(self, addrs: list):
+        self._n_cycles += 1
+        for a in addrs:
+            self._counts[a] = self._counts.get(a, 0) + 1
+
+    @property
+    def ready(self):
+        return self._n_cycles >= self.min_cycles
+
+    @property
+    def n_cycles(self):
+        return self._n_cycles
+
+    @property
+    def n_hot(self):
+        if not self.ready:
+            return 0
+        return sum(1 for c in self._counts.values()
+                   if c / self._n_cycles >= self.hot_threshold)
+
+    def classify(self, addrs: list):
+        """Returns (hot_pixels, rare_events) lists."""
+        if not self.ready:
+            return list(addrs), []
+        hot, rare = [], []
+        for a in addrs:
+            rate = self._counts.get(a, 0) / self._n_cycles
+            (hot if rate >= self.hot_threshold else rare).append(a)
+        return hot, rare
+
+    def find_clusters(self, addrs: list, window=1000, min_size=3):
+        """Find groups of >= min_size addresses within a window of each other."""
+        if len(addrs) < min_size:
+            return []
+        s = sorted(addrs)
+        clusters, i = [], 0
+        while i < len(s):
+            j = i
+            while j < len(s) and s[j] - s[i] <= window:
+                j += 1
+            if j - i >= min_size:
+                clusters.append({
+                    'start': s[i], 'end': s[j - 1],
+                    'count': j - i, 'addrs': s[i:j],
+                })
+            i += 1
+        return clusters
+
+# ---------------------------------------------------------------------------
 
 class DosimeterApp:
     POLL_MS = 400
@@ -261,9 +327,13 @@ class DosimeterApp:
         self._window      = 200
         self._ref_events  = []   # (ts_unix, label) for vertical lines on plot
         self._pat_events  = []   # (ts_unix, label) for pattern-change markers
-        self._connected   = False
-        self._board_ready = False  # True after READY received from board
-        self._running     = False  # True after Start clicked and G sent
+        self._connected      = False
+        self._board_ready    = False  # True after READY received from board
+        self._running        = False  # True after Start clicked and G sent
+        self._addr_remaining = 0      # address lines still expected from ADDRS header
+        self._addr_buf       = []     # addresses collected for current cycle
+        self._bg             = BackgroundModel()
+        self._rare_records   = []     # (iteration, rare_count, clusters) for de-noised plot
 
         self._build_ui()
 
@@ -328,17 +398,31 @@ class DosimeterApp:
         self._desc_var = tk.StringVar()
         ttk.Entry(ef, textvariable=self._desc_var).grid(row=0, column=3, sticky='ew', **pad)
 
-        # ── Row 2: live plot ───────────────────────────────────────────────
-        pf = ttk.Frame(self.root)
-        pf.grid(row=2, column=0, sticky='nsew', padx=6, pady=4)
-        pf.columnconfigure(0, weight=1)
-        pf.rowconfigure(0, weight=1)
+        # ── Row 2: tabbed plots ────────────────────────────────────────────
+        nb = ttk.Notebook(self.root)
+        nb.grid(row=2, column=0, sticky='nsew', padx=6, pady=4)
 
+        tab1 = ttk.Frame(nb)
+        tab2 = ttk.Frame(nb)
+        nb.add(tab1, text='Raw flip count')
+        nb.add(tab2, text='De-noised (rare events)')
+        for tab in (tab1, tab2):
+            tab.columnconfigure(0, weight=1)
+            tab.rowconfigure(0, weight=1)
+
+        # Tab 1 — raw flip count (existing plot)
         self._fig = Figure(figsize=(10, 4), tight_layout=True)
         self._ax  = self._fig.add_subplot(111)
-        self._canvas = FigureCanvasTkAgg(self._fig, master=pf)
+        self._canvas = FigureCanvasTkAgg(self._fig, master=tab1)
         self._canvas.get_tk_widget().grid(row=0, column=0, sticky='nsew')
         self._draw_empty_plot()
+
+        # Tab 2 — de-noised rare event plot
+        self._fig2 = Figure(figsize=(10, 4), tight_layout=True)
+        self._ax2  = self._fig2.add_subplot(111)
+        self._canvas2 = FigureCanvasTkAgg(self._fig2, master=tab2)
+        self._canvas2.get_tk_widget().grid(row=0, column=0, sticky='nsew')
+        self._draw_empty_denoised()
 
         # ── Row 3: status bar ──────────────────────────────────────────────
         sf = ttk.Frame(self.root, relief='sunken', borderwidth=1)
@@ -347,7 +431,7 @@ class DosimeterApp:
         self._slabels = {}
         for key, text in [('iter', 'Iter: —'), ('flips', 'Flips: —'),
                           ('hold', 'Hold: —'), ('refresh', 'Refresh: —'),
-                          ('elapsed', 'Elapsed: —'), ('hang', '')]:
+                          ('elapsed', 'Elapsed: —'), ('bg', 'BG: —'), ('hang', '')]:
             lbl = ttk.Label(sf, text=text, padding=(10, 2))
             lbl.pack(side='left')
             self._slabels[key] = lbl
@@ -465,6 +549,13 @@ class DosimeterApp:
         self._ax.set_title('No data')
         self._canvas.draw_idle()
 
+    def _draw_empty_denoised(self):
+        self._ax2.clear()
+        self._ax2.set_xlabel('Iteration')
+        self._ax2.set_ylabel('Rare flips')
+        self._ax2.set_title('De-noised signal — waiting for background model')
+        self._canvas2.draw_idle()
+
     # -----------------------------------------------------------------------
     # Connection
     # -----------------------------------------------------------------------
@@ -500,6 +591,8 @@ class DosimeterApp:
             start_time_iso=datetime.now(tz=timezone.utc).isoformat())
         self._ref_events.clear()
         self._pat_events.clear()
+        self._rare_records.clear()
+        self._bg   = BackgroundModel()
         self._hang = HangDetector()
 
         # Send initial conditions before Go so first cycle uses GUI values
@@ -565,6 +658,20 @@ class DosimeterApp:
                         self._log_append(payload, 'status')
                     elif kind == 'DATA':
                         ts_unix, raw = payload
+                        try:
+                            line = raw.decode('ascii', errors='replace').strip()
+                        except Exception:
+                            continue
+                        # Address body lines are collected before normal parsing
+                        if self._addr_remaining > 0:
+                            m = ADDR_LINE_RE.match(line)
+                            if m:
+                                self._addr_buf.append(int(m.group(1), 16))
+                                self._addr_remaining -= 1
+                                continue
+                            else:
+                                # Unexpected line mid-stream — fall through to parse
+                                self._addr_remaining = 0
                         record = parse_line(raw, ts_unix)
                         if record:
                             self._handle_record(record)
@@ -586,6 +693,11 @@ class DosimeterApp:
             self._log_append('── Board READY — configure settings and click ▶ Start', 'status')
             return
 
+        elif record['type'] == 'ADDRS_HDR':
+            self._addr_remaining = record['count']
+            self._addr_buf       = []
+            return
+
         elif record['type'] == 'REFRESH':
             label = REFRESH_LABEL.get(record['refresh_rate'], record['refresh_rate'])
             self._ref_events.append((record['ts_unix'], label))
@@ -602,6 +714,30 @@ class DosimeterApp:
 
         elif record['type'] == 'FLIP':
             self._hang.reset(record['hold_s'])
+            record['addrs'] = list(self._addr_buf)
+            self._addr_buf       = []
+            self._addr_remaining = 0
+            addrs = record['addrs']
+            self._bg.update(addrs)
+            hot, rare = self._bg.classify(addrs)
+            clusters  = self._bg.find_clusters(rare)
+            iteration = self._store.iteration + 1 if self._store else 0
+            self._rare_records.append((iteration, len(rare), clusters))
+            # Update BG status bar
+            if self._bg.ready:
+                self._slabels['bg'].config(
+                    text=f'BG: ready  Hot: {self._bg.n_hot:,}')
+            else:
+                self._slabels['bg'].config(
+                    text=f'BG: building ({self._bg.n_cycles}/{self._bg.min_cycles})')
+            # Log cluster events
+            for cl in clusters:
+                span = cl['end'] - cl['start']
+                self._log_append(
+                    f"  [CLUSTER] iter={iteration}  rare={len(rare)}"
+                    f"  cluster: {cl['count']} addrs"
+                    f"  span=0x{span:05X}"
+                    f"  (0x{cl['start']:07X}–0x{cl['end']:07X})", 'note')
 
         if self._store:
             self._store.ingest(record)
@@ -617,9 +753,10 @@ class DosimeterApp:
 
             is_alert = self._alert is not None and fc > self._alert
             tag = 'alert' if is_alert else 'flip'
+            n_addrs = len(record.get('addrs', []))
             self._log_append(
                 f"[{record['timestamp'][11:19]}] #{self._store.iteration:>4}  "
-                f"flips={fc:>10,}  hold={record['hold_s']}s  "
+                f"flips={fc:>10,}  addrs={n_addrs:>5}  hold={record['hold_s']}s  "
                 f"refresh={self._store.refresh_rate}", tag)
             if is_alert:
                 self._log_append(f'  ⚠ {fc:,} exceeds alert threshold {self._alert:,}', 'alert')
@@ -628,6 +765,8 @@ class DosimeterApp:
         try:
             if self._store and self._store.records:
                 self._redraw()
+            if self._rare_records:
+                self._redraw_denoised()
         except Exception:
             pass
         finally:
@@ -701,6 +840,42 @@ class DosimeterApp:
             warnings.simplefilter('ignore', UserWarning)
             self._fig.tight_layout()
         self._canvas.draw_idle()
+
+    def _redraw_denoised(self):
+        records = self._rare_records[-self._window:]
+        xs = [r[0] for r in records]
+        ys = [r[1] for r in records]
+
+        ax = self._ax2
+        ax.clear()
+
+        ax.plot(xs, ys, color='#888', linewidth=0.8, zorder=2)
+        ax.scatter(xs, ys, color='#2196F3', s=18, zorder=3)
+
+        # Mark cluster events with red vertical lines
+        for it, rare_count, clusters in records:
+            if clusters:
+                ax.axvline(it, color='#F44747', linestyle='--', linewidth=1.2, alpha=0.8)
+                label = f'{len(clusters)} cluster{"s" if len(clusters) > 1 else ""}'
+                ax.text(it, ax.get_ylim()[1] * 0.95 if ax.get_ylim()[1] else 1,
+                        label, fontsize=7, color='#F44747', rotation=90, va='top')
+
+        # Background status annotation
+        if self._bg.ready:
+            bg_text = f'Background: {self._bg.n_hot:,} hot pixels  |  Cycles: {self._bg.n_cycles}'
+        else:
+            bg_text = f'Building background… ({self._bg.n_cycles}/{self._bg.min_cycles} cycles)'
+        ax.text(0.01, 0.97, bg_text, transform=ax.transAxes,
+                fontsize=8, va='top', color='#9CDCFE',
+                bbox=dict(boxstyle='round', facecolor='#1e1e1e', alpha=0.6))
+
+        ax.set_xlabel('Iteration')
+        ax.set_ylabel('Rare flips')
+        ax.set_title('De-noised signal (thermal hot pixels removed)')
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', UserWarning)
+            self._fig2.tight_layout()
+        self._canvas2.draw_idle()
 
     # -----------------------------------------------------------------------
     # Controls
