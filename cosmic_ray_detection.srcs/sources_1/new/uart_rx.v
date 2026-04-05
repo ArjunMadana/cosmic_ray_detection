@@ -9,7 +9,7 @@
 
 module uart_rx #(
     parameter CLK_FREQ  = 83_333_333,
-    parameter BAUD_RATE = 115_200
+    parameter BAUD_RATE = 921_600
 )(
     input  wire       clk,
     input  wire       rst,
@@ -18,7 +18,7 @@ module uart_rx #(
     output reg        valid   // 1-cycle pulse when a byte is ready
 );
 
-localparam CLKS_PER_BIT = CLK_FREQ / BAUD_RATE;  // 723
+localparam CLKS_PER_BIT = CLK_FREQ / BAUD_RATE;  // 163 at 150 MHz / 921600 (as passed by cosmic_top)
 
 localparam IDLE  = 2'd0;
 localparam START = 2'd1;

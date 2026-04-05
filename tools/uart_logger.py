@@ -292,7 +292,7 @@ class DosimeterApp:
         ttk.Button(cf, text='↺', width=2, command=self._refresh_ports).pack(side='left', padx=2)
 
         ttk.Label(cf, text='Baud:').pack(side='left', padx=(8, 0))
-        self._baud_var = tk.StringVar(value='115200')
+        self._baud_var = tk.StringVar(value='921600')
         ttk.Entry(cf, textvariable=self._baud_var, width=7).pack(side='left', padx=2)
 
         ttk.Separator(cf, orient='vertical').pack(side='left', fill='y', padx=8)

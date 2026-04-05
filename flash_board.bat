@@ -1,9 +1,18 @@
 @echo off
-echo Flashing bitstream to SPI flash on Arty S7-25...
-echo This takes ~2 minutes. Do not unplug the board.
-echo Output is also saved to flash_board.log
+echo Generating .mcs from bitstream...
+echo Output saved to flash_board.log
 echo.
-"C:\Xilinx\Vivado\2023.1\bin\vivado.bat" -mode batch -source tools/flash_board.tcl > flash_board.log 2>&1
+"C:\Xilinx\Vivado\2023.1\bin\vivado.bat" -mode batch -source tools/make_mcs.tcl > flash_board.log 2>&1
 echo.
-echo Done. See flash_board.log for full output.
+echo MCS generation complete.
+echo.
+echo ── Next: program via Vivado Hardware Manager ──────────────────────────
+echo  1. Open Hardware Manager ^> Open Target ^> Auto Connect
+echo  2. Right-click xc7s25 ^> Add Configuration Memory Device
+echo  3. Select: s25fl128sxxxxxx0-spi-x1_x2_x4
+echo  4. When prompted, set MCS file to:
+echo     cosmic_ray_detection.runs\impl_1\cosmic_top.mcs
+echo  5. Click OK and wait ~2 minutes
+echo ────────────────────────────────────────────────────────────────────────
+echo.
 pause

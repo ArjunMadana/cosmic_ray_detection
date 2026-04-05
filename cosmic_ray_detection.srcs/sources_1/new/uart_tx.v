@@ -21,7 +21,7 @@
 
 module uart_tx #(
     parameter CLK_FREQ = 150_000_000,
-    parameter BAUD_RATE = 115200
+    parameter BAUD_RATE = 921600
 )(
     input  wire       clk,
     input  wire       rst,

@@ -196,7 +196,7 @@
     // UART RX — receives hold-time commands from laptop
     uart_rx #(
         .CLK_FREQ  (150_000_000),
-        .BAUD_RATE (115_200)
+        .BAUD_RATE (921_600)
     ) u_uart_rx (
         .clk   (ui_clk),
         .rst   (fsm_rst),
