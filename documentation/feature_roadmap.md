@@ -1,5 +1,5 @@
 # Feature Roadmap — DRAM Dosimeter
-*Last updated: 2026-04-04*
+*Last updated: 2026-04-04 (Feature 1 complete)*
 
 This document is broken into self-contained feature tasks that can each be delegated to a separate Claude chat.  Each task has its own context, exact files to read, and a precise implementation spec so agents don't waste time re-exploring.
 
@@ -16,15 +16,15 @@ This document is broken into self-contained feature tasks that can each be deleg
 ### FSM state machine (detector_fsm.v)
 
 ```
-WAIT_INIT → FILL → HOLD → SCAN → REPORT → SETTLE → FILL (loop)
-                     ↕         
-               PRINT_REF / PRINT_INT  (interrupt states, return to HOLD)
+WAIT_INIT → FILL → FILL2 → HOLD → SCAN → REPORT → SETTLE → FILL (loop)
+                              ↕         
+                    PRINT_REF / PRINT_INT / PRINT_PAT  (interrupt states, return to HOLD)
 ```
 
-- **FILL:** writes `PATTERN` (32-bit localparam) to every address 0→MEM_SIZE-4 step 4
+- **FILL / FILL2:** writes `active_pattern` to every address 0→MEM_SIZE-4 step 4 — twice per cycle to ensure all cells are written before the hold starts
 - **HOLD:** counts `hold_cycles_sel` clock cycles before proceeding
-- **SCAN:** reads every address, increments `hit_counter` on `rdata != PATTERN`
-- **REPORT:** sends `HOLD:NNNNs FLIPS:XXXXXXXX\r\n` (27 bytes) over UART TX
+- **SCAN:** reads every address, increments `hit_counter` on `rdata != active_pattern`
+- **REPORT:** sends `HOLD:NNNNs PAT:XX FLIPS:XXXXXXXX\r\n` (33 bytes) over UART TX
 - **SETTLE:** waits for AXI to drain before re-entering FILL
 
 ### UART command interface (already implemented)
@@ -41,91 +41,38 @@ Tkinter + matplotlib.  Key classes: `SerialReader` (thread), `DataStore` (CSV+JS
 
 ---
 
-## Feature 1 — Selectable memory pattern (single mode)
+## Feature 1 — Selectable memory pattern (single mode) ✅ COMPLETE
 
 **Goal:** Let the user pick which 32-bit pattern to write/verify: `0xFFFFFFFF`, `0x00000000`, `0x55555555`, `0xAAAAAAAA`.  Default stays `0xFFFFFFFF`.  The active pattern is reported in every REPORT line so data is self-labeling.
 
 **Why:** `0xFFFFFFFF` only detects 1→0 bit decay.  `0x00000000` only detects 0→1 decay.  Checkerboard patterns (`0x55`/`0xAA`) detect both and stress adjacent cells.  Running all four patterns in sequence (separate experiments) reveals whether the Arty S7's DRAM has a dominant decay polarity.
 
-### Files to read before starting
+### What was implemented
 
-1. `cosmic_ray_detection.srcs/sources_1/new/detector_fsm.v` — full file (~470 lines)
-2. `tools/uart_logger.py` — full file, especially `parse_line()`, `DataStore`, `_build_ui()`, `_handle_record()`
+All firmware and Python changes described below were completed.  Key decisions and findings during implementation:
 
-### Firmware changes (detector_fsm.v)
+- **`fill_pattern_sel` latch** — `pattern_sel` (user-facing) is decoupled from `fill_pattern_sel` (latched at FILL entry).  This prevents a mid-cycle pattern change from corrupting the SCAN comparison.  Both FILL passes and SCAN use `active_pattern = f(fill_pattern_sel)`.  REPORT uses `fill_pattern_sel` for the `PAT:XX` field (note: early implementation incorrectly used `pattern_sel` here — fixed).
 
-1. **Remove** the `localparam PATTERN = 32'hFFFFFFFF` on line 93.
+- **Double-FILL (FILL2 state)** — Investigation with experimental data revealed that ~530K words (~3.17% of 16M) failed on the first cycle with any new pattern, including the very first cycle after power-on.  This was traced to incomplete writes on the first FILL pass: cells hold their previous value (random after MIG calibration, or the old pattern after a switch) and fail SCAN.  Fix: added `FILL2` state, an identical second write pass.  After the fix the first-cycle spike dropped from ~530K to ~5–8K (residual genuine DRAM effect), and the very-first-cycle count dropped to 0.
 
-2. **Add** a 2-bit register `pattern_sel` (default `2'd0`) and a wire `active_pattern`:
-   ```verilog
-   reg [1:0] pattern_sel;  // 0=FF, 1=00, 2=55, 3=AA
-   wire [31:0] active_pattern;
-   assign active_pattern = (pattern_sel == 2'd0) ? 32'hFFFFFFFF :
-                           (pattern_sel == 2'd1) ? 32'h00000000 :
-                           (pattern_sel == 2'd2) ? 32'h55555555 :
-                                                   32'hAAAAAAAA;
-   ```
+- **Possible future improvement:** Triple-FILL to further reduce the residual first-cycle spike.  Alternatively, only do the double-write on pattern changes (not every cycle), since steady-state cycles don't need it.  Neither was implemented as the current residual is small and the user is not switching patterns frequently.
 
-3. **Replace** every reference to `PATTERN` in FILL and SCAN states with `active_pattern`.
+- **`PRINT_PAT` state** — Sends `PATTERN:XX\r\n` as an in-band acknowledgment when a `P` command is received during HOLD.  Returns to HOLD after printing.
 
-4. **Add** `pattern_sel <= 2'd0` to the reset block.
+- **`report_idx` width** — Widened from `reg [4:0]` to `reg [5:0]` after the longer REPORT format (33 bytes) caused the counter to wrap at 31, producing an infinite REPORT loop.
 
-5. **Extend the UART RX parser** (the `if (rx_valid)` block, ~line 183) to handle `P<0-3>\n`:
-   - `P` starts a new command accumulator (reuse `cmd_active` / `cmd_acc` mechanism, but for a single digit — or add a separate `pcmd_active` flag to avoid collision with `H` commands)
-   - On `\n` with a valid digit 0-3: set `pattern_sel`, set a new flag `pat_changed = 1`
+- **State register** — Widened from `reg [3:0]` to `reg [4:0]` to accommodate `FILL2 = 4'd9`.
 
-6. **Add a new FSM state** `PRINT_PAT` (needs a 4th bit on `state` or restructure — check if 3-bit state encoding still fits; if not, widen to 4 bits).  Output: `PATTERN:XX\r\n` where XX is `FF`, `00`, `55`, or `AA` (10 bytes total).  Transition back to HOLD.
+### UART format (current)
 
-7. **Modify REPORT state** to include the pattern label.  New format:
-   ```
-   HOLD:NNNNs PAT:XX FLIPS:XXXXXXXX\r\n
-   ```
-   Length: 33 bytes.  Update the `report_idx < 27` guard to `report_idx < 33` and add the `PAT:XX` field at indices 11-16 (shifting the existing FLIPS field to start at index 17).
+```
+HOLD:NNNNs PAT:XX FLIPS:XXXXXXXX\r\n   (33 bytes)
+PATTERN:XX\r\n                          (12 bytes, sent on P command acknowledgment)
+```
 
-   `XX` values: `FF`, `00`, `55`, `AA`.  Compute from `pattern_sel` in the REPORT state using a `case` on `pattern_sel` for the two hex characters.
+### Python (tools/uart_logger.py)
 
-8. **In the HOLD state**, add handling for `pat_changed`:
-   ```verilog
-   if (pat_changed) begin
-       pat_changed <= 0;
-       report_idx  <= 0;
-       state       <= PRINT_PAT;
-   end
-   ```
-   Priority: `btn_changed` → `sw_changed` → `pat_changed` → hold expiry.
-
-### Python changes (tools/uart_logger.py)
-
-1. **Update `FLIP_RE`** to parse new format:
-   ```python
-   FLIP_RE = re.compile(r'HOLD:(\d+)s PAT:([0-9A-Fa-f]+) FLIPS:([0-9A-Fa-f]{8})')
-   ```
-   Update `parse_line()` to extract `pattern` field (group 2), `flip_count` from group 3.
-
-2. **Add `PATTERN_RE`**:
-   ```python
-   PATTERN_RE = re.compile(r'PATTERN:(FF|00|55|AA)')
-   ```
-   Add a parse case and handle in `_handle_record()` (log it, store in `DataStore.pattern`).
-
-3. **Update `DataStore`**: add `pattern` to `CSV_FIELDS` and include it in the row dict.
-
-4. **Add pattern selector to GUI** in `_build_ui()` controls row:
-   ```
-   Pattern: [0xFFFFFFFF ▼]  [Send]
-   ```
-   Combobox values: `['0xFFFFFFFF', '0x00000000', '0x55555555', '0xAAAAAAAA']`.
-   Send button writes `P0\n`…`P3\n` to the board via `self._reader.write()`.
-
-5. **Add `_pat_events` list** to `DosimeterApp.__init__` (same as `_ref_events`).  Populate in `_handle_record()` when `type == 'PATTERN'`.  In `_redraw()`, draw them as green dashed vertical lines with the pattern label.
-
-### Verification
-
-- Flash new bitstream
-- GUI: select `0x55555555`, click Send → log shows `PATTERN:55`
-- Wait for next FLIP → log shows `PAT:55` in the line
-- CSV has `pattern` column populated
-- Replay `.jsonl` → green vertical line appears at pattern-change moment
+All changes complete: `FLIP_RE` updated, `PATTERN_RE` added, `pattern` field in CSV, pattern selector Combobox + Send button in GUI, `_pat_events` drawn as teal dash-dot vertical lines in the plot.
 
 ---
 
@@ -334,7 +281,7 @@ All print states use `report_idx` as a byte counter.  Key rules:
 
 ### State encoding
 
-Currently uses 3-bit `state` with all 8 values used (`WAIT_INIT`=0 through `PRINT_INT`=7).  Any new state (e.g. `PRINT_PAT`, `PRINT_DUAL`) requires widening to 4 bits.  Change `reg [2:0] state` → `reg [3:0] state` and update all `localparam` values (the existing values 0-7 can stay the same; new states use 8+).
+Currently uses 5-bit `state` (`reg [4:0]`).  Assigned values: `WAIT_INIT`=0, `FILL`=1, `HOLD`=2, `SCAN`=3, `REPORT`=4, `SETTLE`=5, `PRINT_REF`=6, `PRINT_INT`=7, `PRINT_PAT`=8, `FILL2`=9.  Next available value is 10.  The 5-bit register supports up to 31 states so there is plenty of headroom.
 
 ### Rebuilding after firmware changes
 
