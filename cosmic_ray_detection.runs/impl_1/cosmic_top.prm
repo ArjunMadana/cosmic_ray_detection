@@ -1,0 +1,11 @@
+===================================
+Configuration Memory information
+===================================
+File Format        MCS
+Interface          SPIX4
+Size               16M
+Start Address      0x00000000
+End Address        0x00FFFFFF
+
+Addr1         Addr2         Date                    File(s)
+0x00000000    0x0012F2CB    Apr  5 11:14:45 2026    C:/_CAMSIN/cosmic_ray_detection/cosmic_ray_detection.runs/impl_1/cosmic_top.bit

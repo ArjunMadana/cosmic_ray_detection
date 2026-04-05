@@ -1,0 +1,7 @@
+# experiment: experiment
+# description: 
+# start_time: 2026-04-05T17:02:35.913471+00:00
+timestamp,iteration,hold_s,refresh_rate,pattern,flip_count,experiment
+2026-04-05T17:02:47.432433+00:00,1,10,OFF,FF,2352,experiment
+2026-04-05T17:02:58.920682+00:00,2,10,OFF,FF,28,experiment
+2026-04-05T17:03:10.408114+00:00,3,10,OFF,FF,28,experiment

@@ -42,12 +42,28 @@ FLIP_RE    = re.compile(r'HOLD:(\d+)s PAT:([0-9A-Fa-f]{2}) FLIPS:([0-9A-Fa-f]{8}
 REFRESH_RE = re.compile(r'REFRESH:(OFF|SLOW|NORM|FAST)')
 INTV_RE    = re.compile(r'INTERVAL:(\d+)s')
 PATTERN_RE = re.compile(r'PATTERN:(FF|00|55|AA)')
+READY_RE   = re.compile(r'^READY$')
 
 HOLD_COLORS = {5: '#4CAF50', 10: '#2196F3', 20: '#FF9800', 30: '#F44736'}
 REFRESH_LABEL = {'OFF': 'Refresh OFF', 'SLOW': 'Slow (~100ms)',
                  'NORM': 'Normal (~7.8µs)', 'FAST': 'Fast (~3.9µs)'}
 PATTERN_LABEL = {'FF': '0xFFFFFFFF', '00': '0x00000000',
                  '55': '0x55555555', 'AA': '0xAAAAAAAA'}
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def find_arty_port():
+    """Return the most likely COM port for the Arty S7 UART interface, or None."""
+    if not SERIAL_AVAILABLE:
+        return None
+    # FT2232H (VID=0x0403, PID=0x6010) creates two ports; UART is on interface B (higher)
+    candidates = [p for p in serial.tools.list_ports.comports()
+                  if p.vid == 0x0403 and p.pid == 0x6010]
+    if candidates:
+        return sorted(candidates, key=lambda p: p.device)[-1].device
+    return None
 
 # ---------------------------------------------------------------------------
 # Serial reader thread
@@ -117,6 +133,8 @@ def parse_line(raw_bytes, ts_unix):
     if m:
         return {'type': 'PATTERN', 'timestamp': ts, 'ts_unix': ts_unix,
                 'pattern': m.group(1).upper(), 'raw': line}
+    if READY_RE.search(line):
+        return {'type': 'READY', 'timestamp': ts, 'ts_unix': ts_unix, 'raw': line}
     return None
 
 # ---------------------------------------------------------------------------
@@ -233,17 +251,19 @@ class DosimeterApp:
         root.rowconfigure(2, weight=1)   # plot row expands
         root.protocol('WM_DELETE_WINDOW', self._on_close)
 
-        self._reader     = None
-        self._store      = None
-        self._hang       = HangDetector()
-        self._q          = queue.Queue()
-        self._stop       = threading.Event()
-        self._start_unix = None
-        self._alert      = None
-        self._window     = 200
-        self._ref_events = []   # (ts_unix, label) for vertical lines on plot
-        self._pat_events = []   # (ts_unix, label) for pattern-change markers
-        self._connected  = False
+        self._reader      = None
+        self._store       = None
+        self._hang        = HangDetector()
+        self._q           = queue.Queue()
+        self._stop        = threading.Event()
+        self._start_unix  = None
+        self._alert       = None
+        self._window      = 200
+        self._ref_events  = []   # (ts_unix, label) for vertical lines on plot
+        self._pat_events  = []   # (ts_unix, label) for pattern-change markers
+        self._connected   = False
+        self._board_ready = False  # True after READY received from board
+        self._running     = False  # True after Start clicked and G sent
 
         self._build_ui()
 
@@ -277,10 +297,15 @@ class DosimeterApp:
 
         ttk.Separator(cf, orient='vertical').pack(side='left', fill='y', padx=8)
 
-        self._conn_btn = ttk.Button(cf, text='Connect',    command=self._connect)
-        self._disc_btn = ttk.Button(cf, text='Disconnect', command=self._disconnect, state='disabled')
+        self._conn_btn  = ttk.Button(cf, text='Connect',      command=self._connect)
+        self._disc_btn  = ttk.Button(cf, text='Disconnect',   command=self._disconnect, state='disabled')
+        self._start_btn = ttk.Button(cf, text='▶ Start',      command=self._start,       state='disabled')
+        self._reset_btn = ttk.Button(cf, text='↺ Reset Board',command=self._reset_board, state='disabled')
         self._conn_btn.pack(side='left', padx=2)
         self._disc_btn.pack(side='left', padx=2)
+        ttk.Separator(cf, orient='vertical').pack(side='left', fill='y', padx=6)
+        self._start_btn.pack(side='left', padx=2)
+        self._reset_btn.pack(side='left', padx=2)
 
         ttk.Separator(cf, orient='vertical').pack(side='left', fill='y', padx=8)
 
@@ -410,7 +435,10 @@ class DosimeterApp:
             return
         ports = [p.device for p in serial.tools.list_ports.comports()]
         self._port_cb['values'] = ports
-        if ports and self._port_var.get() not in ports:
+        arty = find_arty_port()
+        if arty:
+            self._port_var.set(arty)
+        elif ports and self._port_var.get() not in ports:
             self._port_var.set(ports[0])
 
     def _browse_dir(self):
@@ -446,6 +474,23 @@ class DosimeterApp:
             messagebox.showerror('Missing dependency',
                                  'pyserial is not installed.\nRun: pip install pyserial')
             return
+        self._board_ready = False
+        self._running     = False
+        self._stop  = threading.Event()
+        self._q     = queue.Queue()
+        self._reader = SerialReader(self._port_var.get(), int(self._baud_var.get()),
+                                    self._q, self._stop)
+        self._reader.start()
+        self._connected = True
+        self._conn_btn.config( state='disabled')
+        self._disc_btn.config( state='normal')
+        self._start_btn.config(state='disabled')
+        self._reset_btn.config(state='disabled')
+        self._log_append(f'Connected to {self._port_var.get()} — waiting for board READY…', 'status')
+
+    def _start(self):
+        if not self._board_ready or not self._reader:
+            return
         name = self._name_var.get().strip().replace(' ', '_') or 'unnamed'
         desc = self._desc_var.get().strip()
         self._start_unix = time.time()
@@ -456,30 +501,56 @@ class DosimeterApp:
         self._ref_events.clear()
         self._pat_events.clear()
         self._hang = HangDetector()
-        self._stop  = threading.Event()
-        self._q     = queue.Queue()
-        self._reader = SerialReader(self._port_var.get(), int(self._baud_var.get()),
-                                    self._q, self._stop)
-        self._reader.start()
-        self._connected = True
-        self._conn_btn.config(state='disabled')
-        self._disc_btn.config(state='normal')
-        self._log_append(f'── Session: {name}  {desc}', 'status')
+
+        # Send initial conditions before Go so first cycle uses GUI values
+        hold_val = self._hold_var.get().strip()
+        if hold_val.isdigit() and 1 <= int(hold_val) <= 9999:
+            self._reader.write(f'H{hold_val}\n'.encode('ascii'))
+        pat_val = self._pattern_var.get()
+        pat_idx = {'0xFFFFFFFF': '0', '0x00000000': '1',
+                   '0x55555555': '2', '0xAAAAAAAA': '3'}.get(pat_val, '0')
+        self._reader.write(f'P{pat_idx}\n'.encode('ascii'))
+        self._reader.write(b'G')
+
+        self._running = True
+        self._start_btn.config(state='disabled')
+        self._reset_btn.config(state='normal')
+        self._log_append(f'── Session started: {name}  {desc}', 'status')
         self._log_append(f'   CSV   → {self._store.csv_path}', 'status')
         self._log_append(f'   JSONL → {self._store.jsonl_path}', 'status')
 
+    def _reset_board(self):
+        """Send X to abort the current cycle and return board to WAIT_GO."""
+        if self._reader:
+            self._reader.write(b'X')
+        if self._store:
+            self._store.close()
+            self._log_append('── Session paused — board returning to WAIT_GO', 'status')
+            self._log_append(self._store.summary(), 'status')
+            self._store = None
+        self._running     = False
+        self._board_ready = False
+        self._start_btn.config(state='disabled')
+        self._reset_btn.config(state='disabled')
+        self._log_append('Waiting for READY…', 'status')
+
     def _disconnect(self):
-        self._connected = False
+        self._connected   = False
+        self._board_ready = False
+        self._running     = False
         if self._reader:
             self._reader.close()
             self._reader = None
         if self._store:
+            summary = self._store.summary()
             self._store.close()
-            self._log_append('── Session ended', 'status')
-            self._log_append(self._store.summary(), 'status')
             self._store = None
-        self._conn_btn.config(state='normal')
-        self._disc_btn.config(state='disabled')
+            self._log_append('── Session ended', 'status')
+            self._log_append(summary, 'status')
+        self._conn_btn.config( state='normal')
+        self._disc_btn.config( state='disabled')
+        self._start_btn.config(state='disabled')
+        self._reset_btn.config(state='disabled')
 
     # -----------------------------------------------------------------------
     # Event loops (always scheduled; no-op when idle)
@@ -487,7 +558,7 @@ class DosimeterApp:
 
     def _poll(self):
         try:
-            if self._connected and self._store:
+            if self._connected:
                 while not self._q.empty():
                     kind, payload = self._q.get_nowait()
                     if kind == 'STATUS':
@@ -509,7 +580,13 @@ class DosimeterApp:
             self.root.after(self.POLL_MS, self._poll)
 
     def _handle_record(self, record):
-        if record['type'] == 'REFRESH':
+        if record['type'] == 'READY':
+            self._board_ready = True
+            self._start_btn.config(state='normal')
+            self._log_append('── Board READY — configure settings and click ▶ Start', 'status')
+            return
+
+        elif record['type'] == 'REFRESH':
             label = REFRESH_LABEL.get(record['refresh_rate'], record['refresh_rate'])
             self._ref_events.append((record['ts_unix'], label))
             self._log_append(f"Refresh rate → {record['refresh_rate']}", 'refresh')
@@ -526,9 +603,10 @@ class DosimeterApp:
         elif record['type'] == 'FLIP':
             self._hang.reset(record['hold_s'])
 
-        self._store.ingest(record)
+        if self._store:
+            self._store.ingest(record)
 
-        if record['type'] == 'FLIP':
+        if record['type'] == 'FLIP' and self._store:
             fc = record['flip_count']
             elapsed = int(time.time() - self._start_unix)
             self._slabels['iter'].config(    text=f"Iter: {self._store.iteration}")

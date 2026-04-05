@@ -83,7 +83,9 @@ localparam SETTLE     = 4'd5;
 localparam PRINT_REF  = 4'd6;
 localparam PRINT_INT  = 4'd7;
 localparam PRINT_PAT  = 4'd8;
-localparam FILL2      = 4'd9;  // second write pass to ensure all cells are written
+localparam FILL2        = 4'd9;  // second write pass to ensure all cells are written
+localparam PRINT_READY  = 4'd12; // sends READY\r\n after MIG calibration
+localparam WAIT_GO      = 4'd13; // idles until G command received from Python
 
 localparam CYCLES_5S  = 64'd416_666_665;    // 5s  at 83.333 MHz
 localparam CYCLES_10S = 64'd833_333_330;    // 10s at 83.333 MHz
@@ -133,6 +135,9 @@ reg [15:0] cmd_acc;       // accumulates decimal digit value
 reg        pcmd_active;   // currently inside a 'P...' command
 reg        pat_changed;   // triggers PRINT_PAT confirmation state
 
+reg        go_flag;       // set by G command — starts cycle from WAIT_GO
+reg        reset_flag;    // set by X command — aborts any state, returns to PRINT_READY
+
 // Combinational BCD breakdown of hold_sec_val for printing
 wire [3:0] dig3 = hold_sec_val / 1000;
 wire [3:0] dig2 = (hold_sec_val % 1000) / 100;
@@ -166,6 +171,8 @@ always @(posedge clk) begin
         pat_changed      <= 0;
         pattern_sel      <= 2'd0;
         fill_pattern_sel <= 2'd0;
+        go_flag          <= 0;
+        reset_flag       <= 0;
     end else begin
         led0 <= calib_complete;
         led1 <= (state != WAIT_INIT);
@@ -234,6 +241,14 @@ always @(posedge clk) begin
         end
 
         // ----------------------------------------------------------------
+        // Single-byte commands: G = go (start from WAIT_GO), X = reset to WAIT_GO
+        // ----------------------------------------------------------------
+        if (rx_valid) begin
+            if (rx_data == "G") go_flag    <= 1;
+            if (rx_data == "X") reset_flag <= 1;
+        end
+
+        // ----------------------------------------------------------------
         // Switch change detection — works in any state
         // ----------------------------------------------------------------
         sw_prev <= {sw1, sw0};
@@ -243,14 +258,52 @@ always @(posedge clk) begin
         end
 
         // ----------------------------------------------------------------
-        // FSM
+        // FSM — reset_flag can interrupt any state and return to PRINT_READY
         // ----------------------------------------------------------------
-        case (state)
+        if (reset_flag) begin
+            reset_flag  <= 0;
+            go_flag     <= 0;
+            hit_counter <= 0;
+            addr        <= 0;
+            awvalid     <= 0;
+            wvalid      <= 0;
+            arvalid     <= 0;
+            report_idx  <= 0;
+            state       <= PRINT_READY;
+        end else case (state)
             WAIT_INIT: begin
                 if (calib_complete) begin
-                    state            <= FILL;
-                    addr             <= 0;
+                    state      <= PRINT_READY;
+                    report_idx <= 0;
+                end
+            end
+
+            PRINT_READY: begin
+                if (uart_ready && !uart_valid) begin
+                    report_idx <= report_idx + 1;
+                    if (report_idx < 7) uart_valid <= 1;
+                    if      (report_idx == 0) uart_data <= "R";
+                    else if (report_idx == 1) uart_data <= "E";
+                    else if (report_idx == 2) uart_data <= "A";
+                    else if (report_idx == 3) uart_data <= "D";
+                    else if (report_idx == 4) uart_data <= "Y";
+                    else if (report_idx == 5) uart_data <= 8'h0D;
+                    else if (report_idx == 6) uart_data <= 8'h0A;
+                    else if (report_idx == 7) begin
+                        uart_valid <= 0;
+                        state      <= WAIT_GO;
+                    end
+                end else begin
+                    uart_valid <= 0;
+                end
+            end
+
+            WAIT_GO: begin
+                if (go_flag) begin
+                    go_flag          <= 0;
                     fill_pattern_sel <= pattern_sel;
+                    addr             <= 0;
+                    state            <= FILL;
                 end
             end
 
