@@ -334,6 +334,7 @@ class DosimeterApp:
         self._addr_buf       = []     # addresses collected for current cycle
         self._bg             = BackgroundModel()
         self._rare_records   = []     # (iteration, rare_count, clusters) for de-noised plot
+        self._raster_records = []     # (iteration, hot_addrs, rare_addrs) for raster
 
         self._build_ui()
 
@@ -404,9 +405,11 @@ class DosimeterApp:
 
         tab1 = ttk.Frame(nb)
         tab2 = ttk.Frame(nb)
+        tab3 = ttk.Frame(nb)
         nb.add(tab1, text='Raw flip count')
         nb.add(tab2, text='De-noised (rare events)')
-        for tab in (tab1, tab2):
+        nb.add(tab3, text='Address raster')
+        for tab in (tab1, tab2, tab3):
             tab.columnconfigure(0, weight=1)
             tab.rowconfigure(0, weight=1)
 
@@ -423,6 +426,13 @@ class DosimeterApp:
         self._canvas2 = FigureCanvasTkAgg(self._fig2, master=tab2)
         self._canvas2.get_tk_widget().grid(row=0, column=0, sticky='nsew')
         self._draw_empty_denoised()
+
+        # Tab 3 — address raster
+        self._fig3 = Figure(figsize=(10, 4), tight_layout=True)
+        self._ax3  = self._fig3.add_subplot(111)
+        self._canvas3 = FigureCanvasTkAgg(self._fig3, master=tab3)
+        self._canvas3.get_tk_widget().grid(row=0, column=0, sticky='nsew')
+        self._draw_empty_raster()
 
         # ── Row 3: status bar ──────────────────────────────────────────────
         sf = ttk.Frame(self.root, relief='sunken', borderwidth=1)
@@ -556,6 +566,13 @@ class DosimeterApp:
         self._ax2.set_title('De-noised signal — waiting for background model')
         self._canvas2.draw_idle()
 
+    def _draw_empty_raster(self):
+        self._ax3.clear()
+        self._ax3.set_xlabel('Address rank (compressed)')
+        self._ax3.set_ylabel('Iteration')
+        self._ax3.set_title('Address raster — waiting for data')
+        self._canvas3.draw_idle()
+
     # -----------------------------------------------------------------------
     # Connection
     # -----------------------------------------------------------------------
@@ -592,6 +609,7 @@ class DosimeterApp:
         self._ref_events.clear()
         self._pat_events.clear()
         self._rare_records.clear()
+        self._raster_records.clear()
         self._bg   = BackgroundModel()
         self._hang = HangDetector()
 
@@ -723,6 +741,7 @@ class DosimeterApp:
             clusters  = self._bg.find_clusters(rare)
             iteration = self._store.iteration + 1 if self._store else 0
             self._rare_records.append((iteration, len(rare), clusters))
+            self._raster_records.append((iteration, hot, rare))
             # Update BG status bar
             if self._bg.ready:
                 self._slabels['bg'].config(
@@ -767,6 +786,8 @@ class DosimeterApp:
                 self._redraw()
             if self._rare_records:
                 self._redraw_denoised()
+            if self._raster_records:
+                self._redraw_raster()
         except Exception:
             pass
         finally:
@@ -876,6 +897,46 @@ class DosimeterApp:
             warnings.simplefilter('ignore', UserWarning)
             self._fig2.tight_layout()
         self._canvas2.draw_idle()
+
+    def _redraw_raster(self):
+        # Build a compressed address axis: only addresses seen across all cycles get a rank.
+        # Hot pixels → red, rare events → blue, so thermal stripes and anomalies are distinct.
+        records = self._raster_records[-self._window:]
+
+        # Collect all seen addresses and assign a rank
+        all_addrs = sorted({a for _, hot, rare in records for a in hot + rare})
+        if not all_addrs:
+            return
+        rank = {a: i for i, a in enumerate(all_addrs)}
+
+        hot_x, hot_y, rare_x, rare_y = [], [], [], []
+        for it, hot, rare in records:
+            for a in hot:
+                hot_x.append(rank[a])
+                hot_y.append(it)
+            for a in rare:
+                rare_x.append(rank[a])
+                rare_y.append(it)
+
+        ax = self._ax3
+        ax.clear()
+
+        if hot_x:
+            ax.scatter(hot_x, hot_y, c='#F44747', s=1, alpha=0.4,
+                       linewidths=0, label='Hot pixel')
+        if rare_x:
+            ax.scatter(rare_x, rare_y, c='#2196F3', s=4, alpha=0.9,
+                       linewidths=0, label='Rare event')
+
+        ax.set_xlabel(f'Address rank (compressed — {len(all_addrs):,} unique addresses)')
+        ax.set_ylabel('Iteration')
+        ax.set_title('Address raster  —  red=thermal, blue=rare event')
+        if hot_x or rare_x:
+            ax.legend(loc='upper right', fontsize=8, markerscale=4)
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', UserWarning)
+            self._fig3.tight_layout()
+        self._canvas3.draw_idle()
 
     # -----------------------------------------------------------------------
     # Controls

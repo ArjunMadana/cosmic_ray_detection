@@ -1,0 +1,7 @@
+{"type": "INTERVAL", "timestamp": "2026-04-05T21:17:00.029030+00:00", "ts_unix": 1775423820.0290303, "hold_s": 5, "raw": "INTERVAL:0005s"}
+{"type": "PATTERN", "timestamp": "2026-04-05T21:17:00.029030+00:00", "ts_unix": 1775423820.0290303, "pattern": "FF", "raw": "PATTERN:FF"}
+{"type": "FLIP", "timestamp": "2026-04-05T21:17:05.326802+00:00", "ts_unix": 1775423825.326802, "hold_s": 5, "pattern": "FF", "flip_count": 2, "raw": "HOLD:0005s PAT:FF FLIPS:00000002", "addrs": [31505780, 40164760]}
+{"type": "FLIP", "timestamp": "2026-04-05T21:17:11.814535+00:00", "ts_unix": 1775423831.814535, "hold_s": 5, "pattern": "FF", "flip_count": 3, "raw": "HOLD:0005s PAT:FF FLIPS:00000003", "addrs": [31505780, 40164760, 57200296]}
+{"type": "FLIP", "timestamp": "2026-04-05T21:17:18.303225+00:00", "ts_unix": 1775423838.303225, "hold_s": 5, "pattern": "FF", "flip_count": 2, "raw": "HOLD:0005s PAT:FF FLIPS:00000002", "addrs": [31505780, 40164760]}
+{"type": "FLIP", "timestamp": "2026-04-05T21:17:24.798690+00:00", "ts_unix": 1775423844.7986903, "hold_s": 5, "pattern": "FF", "flip_count": 3, "raw": "HOLD:0005s PAT:FF FLIPS:00000003", "addrs": [31505780, 40164760, 57200296]}
+{"type": "FLIP", "timestamp": "2026-04-05T21:17:31.278235+00:00", "ts_unix": 1775423851.278235, "hold_s": 5, "pattern": "FF", "flip_count": 3, "raw": "HOLD:0005s PAT:FF FLIPS:00000003", "addrs": [31505780, 40164760, 57200296]}
