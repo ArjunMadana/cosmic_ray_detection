@@ -1,0 +1,20 @@
+# experiment: V1.01_Pattern_Switching
+# description: Change pattern while running. Uses double fill
+# start_time: 2026-04-04T23:57:27.267275+00:00
+timestamp,iteration,hold_s,refresh_rate,pattern,flip_count,experiment
+2026-04-04T23:57:28.485928+00:00,1,5,OFF,FF,0,V1.01_Pattern_Switching
+2026-04-04T23:57:37.701519+00:00,2,5,OFF,FF,1,V1.01_Pattern_Switching
+2026-04-04T23:57:41.973216+00:00,3,5,OFF,FF,0,V1.01_Pattern_Switching
+2026-04-04T23:57:46.229326+00:00,4,5,OFF,FF,0,V1.01_Pattern_Switching
+2026-04-04T23:57:50.509495+00:00,5,5,OFF,FF,0,V1.01_Pattern_Switching
+2026-04-04T23:57:54.772916+00:00,6,5,OFF,00,6159,V1.01_Pattern_Switching
+2026-04-04T23:57:59.044156+00:00,7,5,OFF,00,1,V1.01_Pattern_Switching
+2026-04-04T23:58:03.300775+00:00,8,5,OFF,00,1,V1.01_Pattern_Switching
+2026-04-04T23:58:07.572028+00:00,9,5,OFF,00,1,V1.01_Pattern_Switching
+2026-04-04T23:58:11.843922+00:00,10,5,OFF,00,1,V1.01_Pattern_Switching
+2026-04-04T23:58:16.115902+00:00,11,5,OFF,55,4826,V1.01_Pattern_Switching
+2026-04-04T23:58:20.371832+00:00,12,5,OFF,55,9,V1.01_Pattern_Switching
+2026-04-04T23:58:24.643706+00:00,13,5,OFF,55,9,V1.01_Pattern_Switching
+2026-04-04T23:58:28.914907+00:00,14,5,OFF,55,9,V1.01_Pattern_Switching
+2026-04-04T23:58:33.187553+00:00,15,5,OFF,AA,7583,V1.01_Pattern_Switching
+2026-04-04T23:58:37.442944+00:00,16,5,OFF,AA,8,V1.01_Pattern_Switching

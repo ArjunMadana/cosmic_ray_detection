@@ -1,0 +1,42 @@
+{"type": "FLIP", "timestamp": "2026-04-04T23:26:38.120136+00:00", "ts_unix": 1775345198.1201358, "hold_s": 5, "pattern": "FF", "flip_count": 529417, "raw": "HOLD:0005s PAT:FF FLIPS:00081409"}
+{"type": "INTERVAL", "timestamp": "2026-04-04T23:26:39.479549+00:00", "ts_unix": 1775345199.4795487, "hold_s": 10, "raw": "INTERVAL:0010s"}
+{"type": "FLIP", "timestamp": "2026-04-04T23:26:49.015539+00:00", "ts_unix": 1775345209.015539, "hold_s": 10, "pattern": "FF", "flip_count": 10, "raw": "HOLD:0010s PAT:FF FLIPS:0000000A"}
+{"type": "PATTERN", "timestamp": "2026-04-04T23:26:51.014989+00:00", "ts_unix": 1775345211.014989, "pattern": "FF", "raw": "PATTERN:FF"}
+{"type": "FLIP", "timestamp": "2026-04-04T23:26:59.911537+00:00", "ts_unix": 1775345219.9115372, "hold_s": 10, "pattern": "FF", "flip_count": 12, "raw": "HOLD:0010s PAT:FF FLIPS:0000000C"}
+{"type": "PATTERN", "timestamp": "2026-04-04T23:27:02.246832+00:00", "ts_unix": 1775345222.2468324, "pattern": "00", "raw": "PATTERN:00"}
+{"type": "FLIP", "timestamp": "2026-04-04T23:27:10.806221+00:00", "ts_unix": 1775345230.8062205, "hold_s": 10, "pattern": "FF", "flip_count": 14, "raw": "HOLD:0010s PAT:FF FLIPS:0000000E"}
+{"type": "FLIP", "timestamp": "2026-04-04T23:27:21.701735+00:00", "ts_unix": 1775345241.7017353, "hold_s": 10, "pattern": "00", "flip_count": 529940, "raw": "HOLD:0010s PAT:00 FLIPS:00081614"}
+{"type": "FLIP", "timestamp": "2026-04-04T23:27:32.598146+00:00", "ts_unix": 1775345252.5981457, "hold_s": 10, "pattern": "00", "flip_count": 6167, "raw": "HOLD:0010s PAT:00 FLIPS:00001817"}
+{"type": "FLIP", "timestamp": "2026-04-04T23:27:43.492970+00:00", "ts_unix": 1775345263.4929705, "hold_s": 10, "pattern": "00", "flip_count": 36, "raw": "HOLD:0010s PAT:00 FLIPS:00000024"}
+{"type": "PATTERN", "timestamp": "2026-04-04T23:27:44.565617+00:00", "ts_unix": 1775345264.5656173, "pattern": "FF", "raw": "PATTERN:FF"}
+{"type": "FLIP", "timestamp": "2026-04-04T23:27:54.388940+00:00", "ts_unix": 1775345274.3889403, "hold_s": 10, "pattern": "00", "flip_count": 36, "raw": "HOLD:0010s PAT:00 FLIPS:00000024"}
+{"type": "INTERVAL", "timestamp": "2026-04-04T23:27:55.333316+00:00", "ts_unix": 1775345275.333316, "hold_s": 1, "raw": "INTERVAL:0001s"}
+{"type": "FLIP", "timestamp": "2026-04-04T23:27:56.277139+00:00", "ts_unix": 1775345276.2771392, "hold_s": 1, "pattern": "FF", "flip_count": 530425, "raw": "HOLD:0001s PAT:FF FLIPS:000817F9"}
+{"type": "FLIP", "timestamp": "2026-04-04T23:27:58.181304+00:00", "ts_unix": 1775345278.1813042, "hold_s": 1, "pattern": "FF", "flip_count": 5718, "raw": "HOLD:0001s PAT:FF FLIPS:00001656"}
+{"type": "FLIP", "timestamp": "2026-04-04T23:28:00.068639+00:00", "ts_unix": 1775345280.0686388, "hold_s": 1, "pattern": "FF", "flip_count": 4179, "raw": "HOLD:0001s PAT:FF FLIPS:00001053"}
+{"type": "FLIP", "timestamp": "2026-04-04T23:28:01.972895+00:00", "ts_unix": 1775345281.9728947, "hold_s": 1, "pattern": "FF", "flip_count": 0, "raw": "HOLD:0001s PAT:FF FLIPS:00000000"}
+{"type": "PATTERN", "timestamp": "2026-04-04T23:28:03.124670+00:00", "ts_unix": 1775345283.1246703, "pattern": "FF", "raw": "PATTERN:FF"}
+{"type": "FLIP", "timestamp": "2026-04-04T23:28:03.885927+00:00", "ts_unix": 1775345283.885927, "hold_s": 1, "pattern": "FF", "flip_count": 0, "raw": "HOLD:0001s PAT:FF FLIPS:00000000"}
+{"type": "FLIP", "timestamp": "2026-04-04T23:28:05.764189+00:00", "ts_unix": 1775345285.7641892, "hold_s": 1, "pattern": "FF", "flip_count": 0, "raw": "HOLD:0001s PAT:FF FLIPS:00000000"}
+{"type": "FLIP", "timestamp": "2026-04-04T23:28:07.652777+00:00", "ts_unix": 1775345287.652777, "hold_s": 1, "pattern": "FF", "flip_count": 0, "raw": "HOLD:0001s PAT:FF FLIPS:00000000"}
+{"type": "PATTERN", "timestamp": "2026-04-04T23:28:08.244551+00:00", "ts_unix": 1775345288.2445514, "pattern": "FF", "raw": "PATTERN:FF"}
+{"type": "FLIP", "timestamp": "2026-04-04T23:28:09.556157+00:00", "ts_unix": 1775345289.556157, "hold_s": 1, "pattern": "FF", "flip_count": 0, "raw": "HOLD:0001s PAT:FF FLIPS:00000000"}
+{"type": "PATTERN", "timestamp": "2026-04-04T23:28:10.580002+00:00", "ts_unix": 1775345290.580002, "pattern": "00", "raw": "PATTERN:00"}
+{"type": "FLIP", "timestamp": "2026-04-04T23:28:11.444475+00:00", "ts_unix": 1775345291.4444752, "hold_s": 1, "pattern": "FF", "flip_count": 0, "raw": "HOLD:0001s PAT:FF FLIPS:00000000"}
+{"type": "FLIP", "timestamp": "2026-04-04T23:28:13.332382+00:00", "ts_unix": 1775345293.3323817, "hold_s": 1, "pattern": "00", "flip_count": 530251, "raw": "HOLD:0001s PAT:00 FLIPS:0008174B"}
+{"type": "FLIP", "timestamp": "2026-04-04T23:28:15.235692+00:00", "ts_unix": 1775345295.2356923, "hold_s": 1, "pattern": "00", "flip_count": 10807, "raw": "HOLD:0001s PAT:00 FLIPS:00002A37"}
+{"type": "FLIP", "timestamp": "2026-04-04T23:28:17.124572+00:00", "ts_unix": 1775345297.1245723, "hold_s": 1, "pattern": "00", "flip_count": 89, "raw": "HOLD:0001s PAT:00 FLIPS:00000059"}
+{"type": "FLIP", "timestamp": "2026-04-04T23:28:19.028168+00:00", "ts_unix": 1775345299.0281682, "hold_s": 1, "pattern": "00", "flip_count": 0, "raw": "HOLD:0001s PAT:00 FLIPS:00000000"}
+{"type": "PATTERN", "timestamp": "2026-04-04T23:28:19.971905+00:00", "ts_unix": 1775345299.9719052, "pattern": "AA", "raw": "PATTERN:AA"}
+{"type": "FLIP", "timestamp": "2026-04-04T23:28:20.916106+00:00", "ts_unix": 1775345300.9161065, "hold_s": 1, "pattern": "00", "flip_count": 0, "raw": "HOLD:0001s PAT:00 FLIPS:00000000"}
+{"type": "FLIP", "timestamp": "2026-04-04T23:28:22.820062+00:00", "ts_unix": 1775345302.8200622, "hold_s": 1, "pattern": "AA", "flip_count": 530610, "raw": "HOLD:0001s PAT:AA FLIPS:000818B2"}
+{"type": "FLIP", "timestamp": "2026-04-04T23:28:24.707436+00:00", "ts_unix": 1775345304.707436, "hold_s": 1, "pattern": "AA", "flip_count": 779, "raw": "HOLD:0001s PAT:AA FLIPS:0000030B"}
+{"type": "FLIP", "timestamp": "2026-04-04T23:28:26.595357+00:00", "ts_unix": 1775345306.5953567, "hold_s": 1, "pattern": "AA", "flip_count": 0, "raw": "HOLD:0001s PAT:AA FLIPS:00000000"}
+{"type": "FLIP", "timestamp": "2026-04-04T23:28:28.499635+00:00", "ts_unix": 1775345308.4996352, "hold_s": 1, "pattern": "AA", "flip_count": 0, "raw": "HOLD:0001s PAT:AA FLIPS:00000000"}
+{"type": "PATTERN", "timestamp": "2026-04-04T23:28:29.411290+00:00", "ts_unix": 1775345309.41129, "pattern": "55", "raw": "PATTERN:55"}
+{"type": "FLIP", "timestamp": "2026-04-04T23:28:30.387242+00:00", "ts_unix": 1775345310.387242, "hold_s": 1, "pattern": "AA", "flip_count": 0, "raw": "HOLD:0001s PAT:AA FLIPS:00000000"}
+{"type": "FLIP", "timestamp": "2026-04-04T23:28:32.291098+00:00", "ts_unix": 1775345312.2910984, "hold_s": 1, "pattern": "55", "flip_count": 529491, "raw": "HOLD:0001s PAT:55 FLIPS:00081453"}
+{"type": "FLIP", "timestamp": "2026-04-04T23:28:34.179052+00:00", "ts_unix": 1775345314.1790519, "hold_s": 1, "pattern": "55", "flip_count": 5320, "raw": "HOLD:0001s PAT:55 FLIPS:000014C8"}
+{"type": "FLIP", "timestamp": "2026-04-04T23:28:36.083246+00:00", "ts_unix": 1775345316.0832462, "hold_s": 1, "pattern": "55", "flip_count": 2528, "raw": "HOLD:0001s PAT:55 FLIPS:000009E0"}
+{"type": "FLIP", "timestamp": "2026-04-04T23:28:37.970825+00:00", "ts_unix": 1775345317.9708247, "hold_s": 1, "pattern": "55", "flip_count": 79, "raw": "HOLD:0001s PAT:55 FLIPS:0000004F"}
+{"type": "FLIP", "timestamp": "2026-04-04T23:28:39.874940+00:00", "ts_unix": 1775345319.87494, "hold_s": 1, "pattern": "55", "flip_count": 79, "raw": "HOLD:0001s PAT:55 FLIPS:0000004F"}

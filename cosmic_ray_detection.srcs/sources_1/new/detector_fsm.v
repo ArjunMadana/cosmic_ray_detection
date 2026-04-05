@@ -83,6 +83,7 @@ localparam SETTLE     = 4'd5;
 localparam PRINT_REF  = 4'd6;
 localparam PRINT_INT  = 4'd7;
 localparam PRINT_PAT  = 4'd8;
+localparam FILL2      = 4'd9;  // second write pass to ensure all cells are written
 
 localparam CYCLES_5S  = 64'd416_666_665;    // 5s  at 83.333 MHz
 localparam CYCLES_10S = 64'd833_333_330;    // 10s at 83.333 MHz
@@ -92,18 +93,21 @@ localparam CYCLES_30S = 64'd2_499_999_990;  // 30s at 83.333 MHz
 localparam CLK_PER_SEC = 64'd150_000_000;   // ui_clk frequency (matches uart_tx CLK_FREQ)
 
 // pattern_sel: 0=0xFFFFFFFF, 1=0x00000000, 2=0x55555555, 3=0xAAAAAAAA
+// pattern_sel can change any time; fill_pattern_sel is latched at the
+// start of each FILL state and held constant through HOLD→SCAN→REPORT.
 reg [1:0] pattern_sel;
+reg [1:0] fill_pattern_sel;  // latched copy used for current FILL/SCAN cycle
 wire [31:0] active_pattern;
-assign active_pattern = (pattern_sel == 2'd0) ? 32'hFFFFFFFF :
-                        (pattern_sel == 2'd1) ? 32'h00000000 :
-                        (pattern_sel == 2'd2) ? 32'h55555555 :
-                                                32'hAAAAAAAA;
+assign active_pattern = (fill_pattern_sel == 2'd0) ? 32'hFFFFFFFF :
+                        (fill_pattern_sel == 2'd1) ? 32'h00000000 :
+                        (fill_pattern_sel == 2'd2) ? 32'h55555555 :
+                                                     32'hAAAAAAAA;
 
 reg [4:0]  state;
 reg [27:0] addr;
 reg [31:0] hit_counter;
 reg [31:0] report_shift;
-reg [4:0]  report_idx;
+reg [5:0]  report_idx;  // must hold up to 34 (new REPORT is 34 bytes)
 reg [63:0] hold_counter;
 reg [63:0] hold_cycles_sel;
 
@@ -158,9 +162,10 @@ always @(posedge clk) begin
         btn_changed     <= 0;
         cmd_active      <= 0;
         cmd_acc         <= 0;
-        pcmd_active     <= 0;
-        pat_changed     <= 0;
-        pattern_sel     <= 2'd0;
+        pcmd_active      <= 0;
+        pat_changed      <= 0;
+        pattern_sel      <= 2'd0;
+        fill_pattern_sel <= 2'd0;
     end else begin
         led0 <= calib_complete;
         led1 <= (state != WAIT_INIT);
@@ -243,12 +248,33 @@ always @(posedge clk) begin
         case (state)
             WAIT_INIT: begin
                 if (calib_complete) begin
-                    state <= FILL;
-                    addr  <= 0;
+                    state            <= FILL;
+                    addr             <= 0;
+                    fill_pattern_sel <= pattern_sel;
                 end
             end
 
             FILL: begin
+                if (!awvalid && !wvalid && !bvalid) begin
+                    awaddr  <= addr;
+                    awvalid <= 1;
+                    wdata   <= active_pattern;
+                    wstrb   <= 4'hF;
+                    wvalid  <= 1;
+                end
+                if (awvalid && awready) awvalid <= 0;
+                if (wvalid  && wready)  wvalid  <= 0;
+                if (bvalid) begin
+                    if (addr >= MEM_SIZE - 4) begin
+                        addr  <= 0;
+                        state <= FILL2;
+                    end else begin
+                        addr <= addr + 4;
+                    end
+                end
+            end
+
+            FILL2: begin
                 if (!awvalid && !wvalid && !bvalid) begin
                     awaddr  <= addr;
                     awvalid <= 1;
@@ -337,7 +363,7 @@ always @(posedge clk) begin
                     else if (report_idx == 14) uart_data <= ":";
                     // idx 15-16: two ASCII hex chars for pattern label
                     else if (report_idx == 15) begin
-                        case (pattern_sel)
+                        case (fill_pattern_sel)
                             2'd0: uart_data <= "F";
                             2'd1: uart_data <= "0";
                             2'd2: uart_data <= "5";
@@ -345,7 +371,7 @@ always @(posedge clk) begin
                         endcase
                     end
                     else if (report_idx == 16) begin
-                        case (pattern_sel)
+                        case (fill_pattern_sel)
                             2'd0: uart_data <= "F";
                             2'd1: uart_data <= "0";
                             2'd2: uart_data <= "5";
@@ -391,9 +417,10 @@ always @(posedge clk) begin
                 wvalid  <= 0;
                 arvalid <= 0;
                 if (!bvalid && !rvalid) begin
-                    addr        <= 0;
-                    hit_counter <= 0;
-                    state       <= FILL;
+                    addr             <= 0;
+                    hit_counter      <= 0;
+                    fill_pattern_sel <= pattern_sel;  // latch pending pattern for next cycle
+                    state            <= FILL;
                 end
             end
 
