@@ -922,11 +922,11 @@ class DosimeterApp:
         ax.clear()
 
         if hot_x:
-            ax.scatter(hot_x, hot_y, c='#F44747', s=1, alpha=0.4,
-                       linewidths=0, label='Hot pixel')
+            ax.scatter(hot_x, hot_y, c='#FF6B6B', s=3, alpha=0.7,
+                       linewidths=0, label='Hot pixel', zorder=2)
         if rare_x:
-            ax.scatter(rare_x, rare_y, c='#2196F3', s=4, alpha=0.9,
-                       linewidths=0, label='Rare event')
+            ax.scatter(rare_x, rare_y, c='#00D4FF', s=8, alpha=1.0,
+                       linewidths=0, label='Rare event', zorder=3)
 
         ax.set_xlabel(f'Address rank (compressed — {len(all_addrs):,} unique addresses)')
         ax.set_ylabel('Iteration')
