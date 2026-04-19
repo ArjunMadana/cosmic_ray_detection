@@ -39,6 +39,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 FLIP_RE      = re.compile(r'HOLD:(\d+)s PAT:([0-9A-Fa-f]{2}) FLIPS:([0-9A-Fa-f]{8})')
+TEMP_RE      = re.compile(r'TEMP:([0-9A-Fa-f]{3})')
 REFRESH_RE   = re.compile(r'REFRESH:(OFF|SLOW|NORM|FAST)')
 INTV_RE      = re.compile(r'INTERVAL:(\d+)s')
 PATTERN_RE   = re.compile(r'PATTERN:(FF|00|55|AA)')
@@ -141,6 +142,12 @@ def parse_line(raw_bytes, ts_unix):
     if m:
         return {'type': 'ADDRS_HDR', 'timestamp': ts, 'ts_unix': ts_unix,
                 'count': int(m.group(1), 16), 'raw': line}
+    m = TEMP_RE.search(line)
+    if m:
+        raw_code = int(m.group(1), 16)
+        temp_c = raw_code * 503.975 / 4096 - 273.15
+        return {'type': 'TEMP', 'timestamp': ts, 'ts_unix': ts_unix,
+                'raw_code': raw_code, 'temp_c': round(temp_c, 1), 'raw': line}
     return None
 
 # ---------------------------------------------------------------------------
@@ -148,7 +155,7 @@ def parse_line(raw_bytes, ts_unix):
 # ---------------------------------------------------------------------------
 
 class DataStore:
-    CSV_FIELDS = ['timestamp', 'iteration', 'hold_s', 'refresh_rate', 'pattern', 'flip_count', 'experiment']
+    CSV_FIELDS = ['timestamp', 'iteration', 'hold_s', 'refresh_rate', 'pattern', 'flip_count', 'temp_c', 'experiment']
 
     def __init__(self, output_dir, name, description, start_time_iso):
         self.name = name
@@ -157,6 +164,7 @@ class DataStore:
         self.notes   = []       # NOTE records
         self.refresh_rate = 'OFF'
         self.pattern      = 'FF'
+        self.temp_c       = None
         self.iteration = 0
 
         Path(output_dir).mkdir(parents=True, exist_ok=True)
@@ -183,6 +191,9 @@ class DataStore:
         if record['type'] == 'PATTERN':
             self.pattern = record['pattern']
             return False
+        if record['type'] == 'TEMP':
+            self.temp_c = record['temp_c']
+            return False
         if record['type'] == 'FLIP':
             self.iteration += 1
             row = {
@@ -193,6 +204,7 @@ class DataStore:
                 'refresh_rate': self.refresh_rate,
                 'pattern':      record.get('pattern', self.pattern),
                 'flip_count':   record['flip_count'],
+                'temp_c':       self.temp_c,
                 'experiment':   self.name,
             }
             self._csv_writer.writerow({k: v for k, v in row.items() if k in self.CSV_FIELDS})
@@ -305,6 +317,251 @@ class BackgroundModel:
 
 # ---------------------------------------------------------------------------
 
+class SweepWindow(tk.Toplevel):
+    """Separate window for automated hold-time sweep experiments."""
+
+    PLOT_MS = 2000
+
+    def __init__(self, parent, app):
+        super().__init__(parent)
+        self.title('Interval Sweep')
+        self.minsize(700, 600)
+        self.protocol('WM_DELETE_WINDOW', self._on_close)
+
+        self._app = app  # reference to DosimeterApp for sending H commands
+
+        # Sweep state
+        self._steps        = []
+        self._step_idx     = 0
+        self._iters_done   = 0
+        self._iters_target = 1
+        self._running      = False
+        self._sweep_data   = {}   # hold_s -> {addr: count}
+        self._sweep_counts = {}   # hold_s -> [flip_count, ...]
+
+        self._build_ui()
+        self.after(self.PLOT_MS, self._update_plots)
+
+    def _build_ui(self):
+        pad = {'padx': 4, 'pady': 2}
+
+        # Config frame
+        cf = ttk.LabelFrame(self, text='Sweep Configuration', padding=4)
+        cf.pack(fill='x', padx=6, pady=(6, 0))
+
+        ttk.Label(cf, text='Min hold (s):').grid(row=0, column=0, sticky='w', **pad)
+        self._min_var = tk.StringVar(value='5')
+        ttk.Entry(cf, textvariable=self._min_var, width=6).grid(row=0, column=1, **pad)
+
+        ttk.Label(cf, text='Max hold (s):').grid(row=0, column=2, sticky='w', **pad)
+        self._max_var = tk.StringVar(value='60')
+        ttk.Entry(cf, textvariable=self._max_var, width=6).grid(row=0, column=3, **pad)
+
+        ttk.Label(cf, text='Step (s):').grid(row=0, column=4, sticky='w', **pad)
+        self._step_var = tk.StringVar(value='5')
+        ttk.Entry(cf, textvariable=self._step_var, width=6).grid(row=0, column=5, **pad)
+
+        ttk.Label(cf, text='Iterations/step:').grid(row=0, column=6, sticky='w', **pad)
+        self._iters_var = tk.StringVar(value='20')
+        ttk.Entry(cf, textvariable=self._iters_var, width=6).grid(row=0, column=7, **pad)
+
+        self._run_btn  = ttk.Button(cf, text='▶ Run Sweep', command=self._start_sweep)
+        self._stop_btn = ttk.Button(cf, text='■ Stop', command=self._stop_sweep, state='disabled')
+        self._run_btn.grid(row=0, column=8, padx=(12, 2))
+        self._stop_btn.grid(row=0, column=9, padx=2)
+
+        # Progress label
+        self._prog_var = tk.StringVar(value='Not running')
+        ttk.Label(self, textvariable=self._prog_var, padding=(6, 2)).pack(anchor='w')
+
+        # Plots frame
+        pf = ttk.Frame(self)
+        pf.pack(fill='both', expand=True, padx=6, pady=4)
+        pf.columnconfigure(0, weight=1)
+        pf.rowconfigure(0, weight=1)
+        pf.rowconfigure(1, weight=1)
+
+        self._fig = Figure(figsize=(9, 7), tight_layout=True)
+        self._ax_bar, self._ax_heat = self._fig.subplots(2, 1)
+        self._canvas_sw = FigureCanvasTkAgg(self._fig, master=pf)
+        self._canvas_sw.get_tk_widget().grid(row=0, column=0, rowspan=2, sticky='nsew')
+        self._draw_empty()
+
+    def _draw_empty(self):
+        for ax, title in [(self._ax_bar,  'Unique failing cells per hold time'),
+                          (self._ax_heat, 'Address raster per hold time')]:
+            ax.clear()
+            ax.set_title(title)
+        self._ax_bar.set_xlabel('Hold time (s)')
+        self._ax_bar.set_ylabel('Unique failing addresses')
+        self._ax_heat.set_xlabel('Address rank (compressed)')
+        self._ax_heat.set_ylabel('Hold time (s)')
+        self._canvas_sw.draw_idle()
+
+    # ------------------------------------------------------------------
+    # Sweep control
+    # ------------------------------------------------------------------
+
+    def _start_sweep(self):
+        try:
+            mn    = int(self._min_var.get())
+            mx    = int(self._max_var.get())
+            step  = int(self._step_var.get())
+            iters = int(self._iters_var.get())
+        except ValueError:
+            messagebox.showwarning('Sweep', 'All fields must be integers.')
+            return
+        if mn < 1 or mx < mn or step < 1 or iters < 1:
+            messagebox.showwarning('Sweep', 'Check values: min ≥ 1, max ≥ min, step ≥ 1, iters ≥ 1.')
+            return
+        if not self._app._running or not self._app._reader:
+            messagebox.showwarning('Sweep', 'Start the main session first (▶ Start), then run the sweep.')
+            return
+
+        self._steps        = list(range(mn, mx + 1, step))
+        self._step_idx     = 0
+        self._iters_done   = 0
+        self._iters_target = iters
+        self._sweep_data   = {s: {} for s in self._steps}
+        self._sweep_counts = {s: [] for s in self._steps}
+        self._running      = True
+        self._run_btn.config(state='disabled')
+        self._stop_btn.config(state='normal')
+        self._send_current_hold()
+        self._update_progress()
+
+    def _stop_sweep(self):
+        self._running = False
+        self._run_btn.config(state='normal')
+        self._stop_btn.config(state='disabled')
+        self._prog_var.set('Stopped.')
+        self._save_csv()
+
+    def _send_current_hold(self):
+        hold = self._steps[self._step_idx]
+        self._app._reader.write(f'H{hold}\n'.encode('ascii'))
+
+    def _advance_step(self):
+        self._step_idx += 1
+        self._iters_done = 0
+        if self._step_idx >= len(self._steps):
+            self._running = False
+            self._run_btn.config(state='normal')
+            self._stop_btn.config(state='disabled')
+            self._prog_var.set('Sweep complete.')
+            self._save_csv()
+        else:
+            self._send_current_hold()
+            self._update_progress()
+
+    def _update_progress(self):
+        if not self._running:
+            return
+        hold = self._steps[self._step_idx]
+        self._prog_var.set(
+            f'Step {self._step_idx + 1}/{len(self._steps)}  —  '
+            f'hold={hold}s  —  iter {self._iters_done}/{self._iters_target}')
+
+    # ------------------------------------------------------------------
+    # Called by DosimeterApp on each FLIP record while sweep is running
+    # ------------------------------------------------------------------
+
+    def on_flip(self, record):
+        hold = self._steps[self._step_idx]
+        for addr in record.get('addrs', []):
+            d = self._sweep_data[hold]
+            d[addr] = d.get(addr, 0) + 1
+        self._sweep_counts[hold].append(record['flip_count'])
+        self._iters_done += 1
+        self._update_progress()
+        if self._iters_done >= self._iters_target:
+            self._advance_step()
+
+    # ------------------------------------------------------------------
+    # Plot refresh
+    # ------------------------------------------------------------------
+
+    def _update_plots(self):
+        try:
+            completed = [s for s in self._steps if self._sweep_counts.get(s)]
+            if completed:
+                self._redraw(completed)
+        except Exception:
+            pass
+        finally:
+            self.after(self.PLOT_MS, self._update_plots)
+
+    def _redraw(self, completed):
+        # Bar chart
+        ax = self._ax_bar
+        ax.clear()
+        unique_counts = [len(self._sweep_data[s]) for s in completed]
+        ax.bar([str(s) for s in completed], unique_counts, color='#2196F3', alpha=0.8)
+        ax.set_xlabel('Hold time (s)')
+        ax.set_ylabel('Unique failing addresses')
+        ax.set_title('Unique failing cells per hold time')
+
+        # Heatmap / scatter: addr rank vs hold_s
+        ax2 = self._ax_heat
+        ax2.clear()
+        all_addrs = sorted({a for s in completed for a in self._sweep_data[s]})
+        if all_addrs:
+            rank = {a: i for i, a in enumerate(all_addrs)}
+            xs, ys, cs = [], [], []
+            for s in completed:
+                for addr, cnt in self._sweep_data[s].items():
+                    xs.append(rank[addr])
+                    ys.append(s)
+                    cs.append(cnt)
+            max_c = max(cs) if cs else 1
+            alphas = [min(1.0, 0.2 + 0.8 * c / max_c) for c in cs]
+            for x, y, a in zip(xs, ys, alphas):
+                ax2.scatter(x, y, c='#00D4FF', s=6, alpha=a, linewidths=0)
+            ax2.set_xlabel(f'Address rank (compressed — {len(all_addrs):,} unique)')
+            ax2.set_ylabel('Hold time (s)')
+            ax2.set_title('Failing address raster by hold time (brighter = more frequent)')
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', UserWarning)
+            self._fig.tight_layout()
+        self._canvas_sw.draw_idle()
+
+    # ------------------------------------------------------------------
+    # Save results CSV
+    # ------------------------------------------------------------------
+
+    def _save_csv(self):
+        if not any(self._sweep_counts.values()):
+            return
+        outdir = self._app._outdir_var.get() or 'data'
+        stamp  = datetime.now().strftime('%Y%m%d_%H%M%S')
+        name   = self._app._name_var.get().strip().replace(' ', '_') or 'sweep'
+        path   = Path(outdir) / f'sweep_{name}_{stamp}.csv'
+        try:
+            Path(outdir).mkdir(parents=True, exist_ok=True)
+            with open(path, 'w', newline='') as f:
+                f.write(f'# sweep experiment: {name}\n')
+                w = csv.DictWriter(f, fieldnames=['hold_s', 'unique_addrs',
+                                                   'mean_flips', 'min_flips', 'max_flips'])
+                w.writeheader()
+                for s in self._steps:
+                    counts = self._sweep_counts.get(s, [])
+                    if counts:
+                        w.writerow({'hold_s': s,
+                                    'unique_addrs': len(self._sweep_data[s]),
+                                    'mean_flips': round(sum(counts) / len(counts), 1),
+                                    'min_flips': min(counts),
+                                    'max_flips': max(counts)})
+            self._prog_var.set(f'{self._prog_var.get()}  → {path}')
+        except Exception as e:
+            self._prog_var.set(f'CSV save error: {e}')
+
+    def _on_close(self):
+        self._running = False
+        self._app._sweep_win = None
+        self.destroy()
+
+
 class DosimeterApp:
     POLL_MS = 400
     PLOT_MS = 1500
@@ -327,6 +584,7 @@ class DosimeterApp:
         self._window      = 200
         self._ref_events  = []   # (ts_unix, label) for vertical lines on plot
         self._pat_events  = []   # (ts_unix, label) for pattern-change markers
+        self._sweep_win      = None   # SweepWindow instance (if open)
         self._connected      = False
         self._board_ready    = False  # True after READY received from board
         self._running        = False  # True after Start clicked and G sent
@@ -377,6 +635,8 @@ class DosimeterApp:
         ttk.Separator(cf, orient='vertical').pack(side='left', fill='y', padx=6)
         self._start_btn.pack(side='left', padx=2)
         self._reset_btn.pack(side='left', padx=2)
+        ttk.Separator(cf, orient='vertical').pack(side='left', fill='y', padx=6)
+        ttk.Button(cf, text='Sweep…', command=self._open_sweep).pack(side='left', padx=2)
 
         ttk.Separator(cf, orient='vertical').pack(side='left', fill='y', padx=8)
 
@@ -441,7 +701,8 @@ class DosimeterApp:
         self._slabels = {}
         for key, text in [('iter', 'Iter: —'), ('flips', 'Flips: —'),
                           ('hold', 'Hold: —'), ('refresh', 'Refresh: —'),
-                          ('elapsed', 'Elapsed: —'), ('bg', 'BG: —'), ('hang', '')]:
+                          ('elapsed', 'Elapsed: —'), ('temp', 'Temp: —'),
+                          ('bg', 'BG: —'), ('hang', '')]:
             lbl = ttk.Label(sf, text=text, padding=(10, 2))
             lbl.pack(side='left')
             self._slabels[key] = lbl
@@ -645,6 +906,12 @@ class DosimeterApp:
         self._reset_btn.config(state='disabled')
         self._log_append('Waiting for READY…', 'status')
 
+    def _open_sweep(self):
+        if self._sweep_win is None or not self._sweep_win.winfo_exists():
+            self._sweep_win = SweepWindow(self.root, self)
+        else:
+            self._sweep_win.lift()
+
     def _disconnect(self):
         self._connected   = False
         self._board_ready = False
@@ -726,6 +993,9 @@ class DosimeterApp:
             self._pat_events.append((record['ts_unix'], label))
             self._log_append(f"Pattern → {label}", 'interval')
 
+        elif record['type'] == 'TEMP':
+            self._slabels['temp'].config(text=f"Temp: {record['temp_c']} °C")
+
         elif record['type'] == 'INTERVAL':
             self._log_append(f"Hold interval → {record['hold_s']} s", 'interval')
             self._hang.update_hold(record['hold_s'])
@@ -740,6 +1010,8 @@ class DosimeterApp:
             hot, rare = self._bg.classify(addrs)
             clusters  = self._bg.find_clusters(rare)
             iteration = self._store.iteration + 1 if self._store else 0
+            if self._sweep_win and self._sweep_win._running:
+                self._sweep_win.on_flip(record)
             self._rare_records.append((iteration, len(rare), clusters))
             self._raster_records.append((iteration, hot, rare))
             # Update BG status bar

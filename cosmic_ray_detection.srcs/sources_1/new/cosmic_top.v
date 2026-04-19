@@ -61,6 +61,7 @@
     wire        ui_clk;
     wire        ui_rst;
     wire        calib_complete;
+    wire [11:0] device_temp;
     
     // AXI wires
     wire [27:0] awaddr;
@@ -142,7 +143,8 @@
         .S00_AXI_0_arsize   (3'b010),
         .S00_AXI_0_wlast    (1'b1),
         .reset_0            (~reset),
-        .ext_refresh_tick   (refresh_tick_out)
+        .ext_refresh_tick   (refresh_tick_out),
+        .device_temp_0      (device_temp)
     );
     
     // FSM
@@ -180,7 +182,8 @@
         .btn1           (btn1),
         .btn2           (btn2),
         .btn3           (btn3),
-        .led1           (led1)
+        .led1           (led1),
+        .temp_raw       (device_temp)
     );
     
     // UART TX

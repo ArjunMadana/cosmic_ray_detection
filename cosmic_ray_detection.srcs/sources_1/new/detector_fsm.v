@@ -66,7 +66,11 @@ module detector_fsm #(
     input wire         btn0,
     input wire         btn1,
     input wire         btn2,
-    input wire         btn3
+    input wire         btn3,
+
+    // On-chip die temperature from MIG XADC (12-bit ADC code)
+    // temp_C = raw * 503.975 / 4096 - 273.15
+    input wire [11:0]  temp_raw
 );
 
 localparam REF_OFF    = 32'h0;
@@ -87,6 +91,7 @@ localparam FILL2        = 4'd9;  // second write pass to ensure all cells are wr
 localparam STREAM_ADDRS = 4'd10; // streams flip addresses over UART before REPORT
 localparam PRINT_READY  = 4'd12; // sends READY\r\n after MIG calibration
 localparam WAIT_GO      = 4'd13; // idles until G command received from Python
+localparam PRINT_TEMP   = 4'd14; // sends TEMP:XXX\r\n after each REPORT
 
 localparam CYCLES_5S  = 64'd416_666_665;    // 5s  at 83.333 MHz
 localparam CYCLES_10S = 64'd833_333_330;    // 10s at 83.333 MHz
@@ -110,6 +115,7 @@ reg [4:0]  state;
 reg [27:0] addr;
 reg [31:0] hit_counter;
 reg [31:0] report_shift;
+reg [11:0] temp_shift;   // latched temp_raw at start of PRINT_TEMP
 reg [5:0]  report_idx;  // must hold up to 34 (new REPORT is 34 bytes)
 reg [63:0] hold_counter;
 reg [63:0] hold_cycles_sel;
@@ -185,6 +191,7 @@ always @(posedge clk) begin
         buf_rd_ptr       <= 0;
         buf_count        <= 0;
         stream_body      <= 0;
+        temp_shift       <= 12'd0;
     end else begin
         led0 <= calib_complete;
         led1 <= (state != WAIT_INIT);
@@ -599,7 +606,9 @@ always @(posedge clk) begin
                     end
                     else if (report_idx == 34) begin
                         uart_valid <= 0;
-                        state      <= SETTLE;
+                        report_idx <= 0;
+                        temp_shift <= temp_raw;
+                        state      <= PRINT_TEMP;
                     end
                 end else begin
                     uart_valid <= 0;
@@ -748,6 +757,71 @@ always @(posedge clk) begin
                     else if (report_idx == 12) begin
                         uart_valid <= 0;
                         state      <= HOLD;
+                    end
+                end else begin
+                    uart_valid <= 0;
+                end
+            end
+
+            // Output format: "TEMP:XXX\r\n"  (10 bytes)
+            // XXX = 3 hex digits of 12-bit XADC die temperature
+            // Python converts to °C: raw * 503.975 / 4096 - 273.15
+            PRINT_TEMP: begin
+                if (uart_ready && !uart_valid) begin
+                    report_idx <= report_idx + 1;
+
+                    if (report_idx < 10)
+                        uart_valid <= 1;
+
+                    if      (report_idx == 0) uart_data <= "T";
+                    else if (report_idx == 1) uart_data <= "E";
+                    else if (report_idx == 2) uart_data <= "M";
+                    else if (report_idx == 3) uart_data <= "P";
+                    else if (report_idx == 4) uart_data <= ":";
+                    else if (report_idx == 5) begin
+                        case (temp_shift[11:8])
+                            4'h0: uart_data <= "0"; 4'h1: uart_data <= "1";
+                            4'h2: uart_data <= "2"; 4'h3: uart_data <= "3";
+                            4'h4: uart_data <= "4"; 4'h5: uart_data <= "5";
+                            4'h6: uart_data <= "6"; 4'h7: uart_data <= "7";
+                            4'h8: uart_data <= "8"; 4'h9: uart_data <= "9";
+                            4'hA: uart_data <= "A"; 4'hB: uart_data <= "B";
+                            4'hC: uart_data <= "C"; 4'hD: uart_data <= "D";
+                            4'hE: uart_data <= "E"; 4'hF: uart_data <= "F";
+                        endcase
+                    end
+                    else if (report_idx == 6) begin
+                        case (temp_shift[7:4])
+                            4'h0: uart_data <= "0"; 4'h1: uart_data <= "1";
+                            4'h2: uart_data <= "2"; 4'h3: uart_data <= "3";
+                            4'h4: uart_data <= "4"; 4'h5: uart_data <= "5";
+                            4'h6: uart_data <= "6"; 4'h7: uart_data <= "7";
+                            4'h8: uart_data <= "8"; 4'h9: uart_data <= "9";
+                            4'hA: uart_data <= "A"; 4'hB: uart_data <= "B";
+                            4'hC: uart_data <= "C"; 4'hD: uart_data <= "D";
+                            4'hE: uart_data <= "E"; 4'hF: uart_data <= "F";
+                        endcase
+                    end
+                    else if (report_idx == 7) begin
+                        case (temp_shift[3:0])
+                            4'h0: uart_data <= "0"; 4'h1: uart_data <= "1";
+                            4'h2: uart_data <= "2"; 4'h3: uart_data <= "3";
+                            4'h4: uart_data <= "4"; 4'h5: uart_data <= "5";
+                            4'h6: uart_data <= "6"; 4'h7: uart_data <= "7";
+                            4'h8: uart_data <= "8"; 4'h9: uart_data <= "9";
+                            4'hA: uart_data <= "A"; 4'hB: uart_data <= "B";
+                            4'hC: uart_data <= "C"; 4'hD: uart_data <= "D";
+                            4'hE: uart_data <= "E"; 4'hF: uart_data <= "F";
+                        endcase
+                    end
+                    else if (report_idx == 8) uart_data <= 8'h0D;
+                    else if (report_idx == 9) begin
+                        uart_data  <= 8'h0A;
+                        uart_valid <= 1;
+                    end
+                    else if (report_idx == 10) begin
+                        uart_valid <= 0;
+                        state      <= SETTLE;
                     end
                 end else begin
                     uart_valid <= 0;

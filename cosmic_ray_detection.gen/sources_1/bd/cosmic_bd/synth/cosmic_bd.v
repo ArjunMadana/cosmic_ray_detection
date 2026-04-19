@@ -2,7 +2,7 @@
 //Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
 //--------------------------------------------------------------------------------
 //Tool Version: Vivado v.2023.1 (win64) Build 3865809 Sun May  7 15:05:29 MDT 2023
-//Date        : Fri Mar  6 00:23:28 2026
+//Date        : Sun Apr 19 14:03:53 2026
 //Host        : TopLaptop running 64-bit major release  (build 9200)
 //Command     : generate_target cosmic_bd.bd
 //Design      : cosmic_bd
@@ -60,12 +60,13 @@ module cosmic_bd
     S00_AXI_0_wready,
     S00_AXI_0_wstrb,
     S00_AXI_0_wvalid,
+    device_temp_0,
+    ext_refresh_tick,
     init_calib_complete_0,
     reset,
     reset_0,
     sys_clock,
-    ui_clk_0,
-    ext_refresh_tick);
+    ui_clk_0);
   (* X_INTERFACE_INFO = "xilinx.com:interface:ddrx:1.0 DDR3_0 ADDR" *) (* X_INTERFACE_PARAMETER = "XIL_INTERFACENAME DDR3_0, AXI_ARBITRATION_SCHEME TDM, BURST_LENGTH 8, CAN_DEBUG false, CAS_LATENCY 11, CAS_WRITE_LATENCY 11, CS_ENABLED true, DATA_MASK_ENABLED true, DATA_WIDTH 8, MEMORY_TYPE COMPONENTS, MEM_ADDR_MAP ROW_COLUMN_BANK, SLOT Single, TIMEPERIOD_PS 1250" *) output [13:0]DDR3_0_addr;
   (* X_INTERFACE_INFO = "xilinx.com:interface:ddrx:1.0 DDR3_0 BA" *) output [2:0]DDR3_0_ba;
   (* X_INTERFACE_INFO = "xilinx.com:interface:ddrx:1.0 DDR3_0 CAS_N" *) output DDR3_0_cas_n;
@@ -114,12 +115,13 @@ module cosmic_bd
   (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S00_AXI_0 WREADY" *) output S00_AXI_0_wready;
   (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S00_AXI_0 WSTRB" *) input [3:0]S00_AXI_0_wstrb;
   (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S00_AXI_0 WVALID" *) input S00_AXI_0_wvalid;
+  output [11:0]device_temp_0;
+  input ext_refresh_tick;
   output init_calib_complete_0;
   (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 RST.RESET RST" *) (* X_INTERFACE_PARAMETER = "XIL_INTERFACENAME RST.RESET, INSERT_VIP 0, POLARITY ACTIVE_LOW" *) input reset;
   (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 RST.RESET_0 RST" *) (* X_INTERFACE_PARAMETER = "XIL_INTERFACENAME RST.RESET_0, INSERT_VIP 0, POLARITY ACTIVE_LOW" *) input reset_0;
   (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 CLK.SYS_CLOCK CLK" *) (* X_INTERFACE_PARAMETER = "XIL_INTERFACENAME CLK.SYS_CLOCK, CLK_DOMAIN cosmic_bd_sys_clock, FREQ_HZ 12000000, FREQ_TOLERANCE_HZ 0, INSERT_VIP 0, PHASE 0.0" *) input sys_clock;
   (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 CLK.UI_CLK_0 CLK" *) (* X_INTERFACE_PARAMETER = "XIL_INTERFACENAME CLK.UI_CLK_0, CLK_DOMAIN cosmic_bd_mig_7series_0_2_ui_clk, FREQ_HZ 166666667, FREQ_TOLERANCE_HZ 0, INSERT_VIP 0, PHASE 0" *) output ui_clk_0;
-  input ext_refresh_tick;
 
   wire [31:0]S00_AXI_0_1_ARADDR;
   wire [1:0]S00_AXI_0_1_ARBURST;
@@ -172,6 +174,7 @@ module cosmic_bd
   wire mig_7series_0_DDR3_RAS_N;
   wire mig_7series_0_DDR3_RESET_N;
   wire mig_7series_0_DDR3_WE_N;
+  wire [11:0]mig_7series_0_device_temp;
   wire mig_7series_0_init_calib_complete;
   wire mig_7series_0_mmcm_locked;
   wire mig_7series_0_ui_clk;
@@ -258,6 +261,7 @@ module cosmic_bd
   assign S00_AXI_0_rresp[1:0] = S00_AXI_0_1_RRESP;
   assign S00_AXI_0_rvalid = S00_AXI_0_1_RVALID;
   assign S00_AXI_0_wready = S00_AXI_0_1_WREADY;
+  assign device_temp_0 = mig_7series_0_device_temp;
   assign init_calib_complete_0 = mig_7series_0_init_calib_complete;
   assign reset_0_1 = reset_0;
   assign reset_1 = reset;
@@ -324,10 +328,11 @@ module cosmic_bd
         .s_axi_wready(smartconnect_0_M00_AXI_WREADY),
         .s_axi_wstrb(smartconnect_0_M00_AXI_WSTRB),
         .s_axi_wvalid(smartconnect_0_M00_AXI_WVALID),
+        .device_temp(mig_7series_0_device_temp),
+        .ext_refresh_tick(ext_refresh_tick),
         .sys_clk_i(clk_wiz_0_clk_out1),
         .sys_rst(reset_0_1),
-        .ui_clk(mig_7series_0_ui_clk),
-        .ext_refresh_tick(ext_refresh_tick));
+        .ui_clk(mig_7series_0_ui_clk));
   cosmic_bd_reset_inv_0_0 reset_inv_0
        (.Op1(reset_1),
         .Res(reset_inv_0_Res));
