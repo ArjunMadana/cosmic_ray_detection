@@ -61,7 +61,6 @@ module cosmic_bd
     S00_AXI_0_wstrb,
     S00_AXI_0_wvalid,
     device_temp_0,
-    ext_refresh_tick,
     init_calib_complete_0,
     reset,
     reset_0,
@@ -116,7 +115,6 @@ module cosmic_bd
   (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S00_AXI_0 WSTRB" *) input [3:0]S00_AXI_0_wstrb;
   (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 S00_AXI_0 WVALID" *) input S00_AXI_0_wvalid;
   output [11:0]device_temp_0;
-  input ext_refresh_tick;
   output init_calib_complete_0;
   (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 RST.RESET RST" *) (* X_INTERFACE_PARAMETER = "XIL_INTERFACENAME RST.RESET, INSERT_VIP 0, POLARITY ACTIVE_LOW" *) input reset;
   (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 RST.RESET_0 RST" *) (* X_INTERFACE_PARAMETER = "XIL_INTERFACENAME RST.RESET_0, INSERT_VIP 0, POLARITY ACTIVE_LOW" *) input reset_0;
@@ -329,7 +327,6 @@ module cosmic_bd
         .s_axi_wstrb(smartconnect_0_M00_AXI_WSTRB),
         .s_axi_wvalid(smartconnect_0_M00_AXI_WVALID),
         .device_temp(mig_7series_0_device_temp),
-        .ext_refresh_tick(ext_refresh_tick),
         .sys_clk_i(clk_wiz_0_clk_out1),
         .sys_rst(reset_0_1),
         .ui_clk(mig_7series_0_ui_clk));

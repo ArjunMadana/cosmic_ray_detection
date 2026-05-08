@@ -46,6 +46,8 @@ Print states (`PRINT_REF`, `PRINT_INT`) use a `report_idx` counter with one `uar
 
 Tkinter + matplotlib.  Key classes: `SerialReader` (thread), `DataStore` (CSV+JSONL), `DosimeterApp` (GUI).  UART messages are parsed in `parse_line()` using regexes at the top of the file.  New UART messages need a new regex + handling in `_handle_record()`.  New GUI controls go in `_build_ui()`, row 4 (controls strip).
 
+Maintenance note: the raw flip-count plot uses one persistent secondary y-axis (`self._ax_temp`) for the temperature overlay.  Reuse and clear that axis on redraws; do not call `ax.twinx()` inside `_redraw()`, because it stacks duplicate right-side axes and temperature traces.
+
 ---
 
 ## Feature 1 — Selectable memory pattern (single mode) ✅ COMPLETE

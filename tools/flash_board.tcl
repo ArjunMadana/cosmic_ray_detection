@@ -1,21 +1,26 @@
 # flash_board.tcl — Writes bitstream to onboard SPI flash (W25Q128JV) on Arty S7-25.
 #
-# Usage (from the project root):
-#   vivado -mode batch -source tools/flash_board.tcl
+# Usage (Vivado TCL console, project open):
+#   source {c:/_CAMSIN/cosmic_ray_detection/tools/flash_board.tcl}
 #
-# Only needed after a firmware rebuild.  For rapid dev iteration, use
-# program_board.tcl (volatile JTAG) instead — it's faster but lost on power cycle.
+# Usage (batch mode, from project root):
+#   vivado -mode batch -source tools/flash_board.tcl
 #
 # After flashing, power-cycle the board.  It will auto-load the bitstream
 # from flash on every subsequent power-up without needing JTAG.
 
-set bitfile [file normalize "cosmic_ray_detection.runs/impl_1/cosmic_top.bit"]
-set mcsfile [file normalize "cosmic_ray_detection.runs/impl_1/cosmic_top.mcs"]
+# ---------------------------------------------------------------------------
+# Locate files using the project directory (works regardless of Vivado's CWD)
+# ---------------------------------------------------------------------------
+
+set proj_dir [get_property DIRECTORY [current_project]]
+set bitfile  [file normalize "$proj_dir/cosmic_ray_detection.runs/impl_1/cosmic_top.bit"]
+set mcsfile  [file normalize "$proj_dir/cosmic_ray_detection.runs/impl_1/cosmic_top.mcs"]
 
 if {![file exists $bitfile]} {
     puts "ERROR: Bitfile not found: $bitfile"
     puts "Run implementation and Generate Bitstream first."
-    exit 1
+    return
 }
 
 puts "Generating .mcs from: $bitfile"
@@ -35,25 +40,24 @@ open_hw_target
 set device [lindex [get_hw_devices] 0]
 if {$device eq ""} {
     puts "ERROR: No JTAG device found. Check USB cable."
-    exit 1
+    close_hw_target
+    disconnect_hw_server
+    return
 }
 
 current_hw_device $device
 refresh_hw_device $device
 
-# Get or create the SPI flash cfgmem object
-# The Arty S7-25 uses a Winbond W25Q128JV (compatible with s25fl128sxxxxxx0)
 set flash_parts [get_cfgmem_parts {s25fl128sxxxxxx0-spi-x1_x2_x4}]
 if {[llength $flash_parts] == 0} {
-    puts "ERROR: Flash part s25fl128sxxxxxx0 not found in Vivado library."
-    puts "Try: get_cfgmem_parts {w25q128*} in Vivado Tcl console to find the correct part name."
-    exit 1
+    puts "ERROR: Flash part not found. Run: get_cfgmem_parts {w25q128*} to find the correct name."
+    close_hw_target
+    disconnect_hw_server
+    return
 }
 
 set flash [create_hw_cfgmem -hw_device $device [lindex $flash_parts 0]]
 
-# PROGRAM.ADDRESS_RANGE and PROGRAM.FILES (as a list) are required by Vivado 2023.1.
-# BLANK_CHECK 0: skip blank check — flash already has previous bitstream.
 set_property PROGRAM.ADDRESS_RANGE          {use_file}       $flash
 set_property PROGRAM.FILES                  [list $mcsfile]  $flash
 set_property PROGRAM.PRM_FILE               {}               $flash

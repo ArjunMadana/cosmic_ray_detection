@@ -492,18 +492,42 @@ class SweepWindow(tk.Toplevel):
             self.after(self.PLOT_MS, self._update_plots)
 
     def _redraw(self, completed):
-        # Bar chart
+        # Bar chart — mean flip count per hold time
         ax = self._ax_bar
         ax.clear()
-        unique_counts = [len(self._sweep_data[s]) for s in completed]
-        ax.bar([str(s) for s in completed], unique_counts, color='#2196F3', alpha=0.8)
+        means        = [sum(self._sweep_counts[s]) / max(len(self._sweep_counts[s]), 1)
+                        for s in completed]
+        bars = ax.bar([str(s) for s in completed], means, color='#2196F3', alpha=0.8)
+        # Annotate each bar: iteration count + unique address count
+        ymax = max(means) if any(m > 0 for m in means) else 1
+        for bar, s, mean in zip(bars, completed, means):
+            n_iter  = len(self._sweep_counts[s])
+            n_addrs = len(self._sweep_data[s])
+            ax.text(bar.get_x() + bar.get_width() / 2,
+                    mean + ymax * 0.02,
+                    f'{n_iter} iter\n{n_addrs:,} addr',
+                    ha='center', va='bottom', fontsize=7, color='#ccc')
         ax.set_xlabel('Hold time (s)')
-        ax.set_ylabel('Unique failing addresses')
-        ax.set_title('Unique failing cells per hold time')
+        ax.set_ylabel('Mean flip count')
+        ax.set_title('Mean flip count per hold time  (annotated: iterations completed, unique failing addresses)')
+        if not any(m > 0 for m in means):
+            ax.text(0.5, 0.5, 'No flips yet — try longer hold times',
+                    transform=ax.transAxes, ha='center', va='center',
+                    fontsize=10, color='#888')
 
-        # Heatmap / scatter: addr rank vs hold_s
+        # Scatter: failing address rank vs hold time
+        # Each dot is one address that flipped at that hold time.
+        # Dot brightness = how many times that address flipped across iterations.
         ax2 = self._ax_heat
         ax2.clear()
+        ax2.set_title('Failing address raster by hold time')
+        ax2.set_xlabel('Address rank (compressed — each dot = one unique failing cell)')
+        ax2.set_ylabel('Hold time (s)')
+        ax2.text(0.5, 0.98,
+                 'Brighter dot = cell failed more often across iterations at that hold time.\n'
+                 'Dots that appear at low hold times are the weakest cells.',
+                 transform=ax2.transAxes, ha='center', va='top',
+                 fontsize=7, color='#aaa')
         all_addrs = sorted({a for s in completed for a in self._sweep_data[s]})
         if all_addrs:
             rank = {a: i for i, a in enumerate(all_addrs)}
@@ -517,9 +541,7 @@ class SweepWindow(tk.Toplevel):
             alphas = [min(1.0, 0.2 + 0.8 * c / max_c) for c in cs]
             for x, y, a in zip(xs, ys, alphas):
                 ax2.scatter(x, y, c='#00D4FF', s=6, alpha=a, linewidths=0)
-            ax2.set_xlabel(f'Address rank (compressed — {len(all_addrs):,} unique)')
-            ax2.set_ylabel('Hold time (s)')
-            ax2.set_title('Failing address raster by hold time (brighter = more frequent)')
+            ax2.set_xlabel(f'Address rank (compressed — {len(all_addrs):,} unique failing cells)')
 
         with warnings.catch_warnings():
             warnings.simplefilter('ignore', UserWarning)
@@ -585,6 +607,7 @@ class DosimeterApp:
         self._ref_events  = []   # (ts_unix, label) for vertical lines on plot
         self._pat_events  = []   # (ts_unix, label) for pattern-change markers
         self._sweep_win      = None   # SweepWindow instance (if open)
+        self._temp_records   = []     # (ts_unix, temp_c) for plot overlay
         self._connected      = False
         self._board_ready    = False  # True after READY received from board
         self._running        = False  # True after Start clicked and G sent
@@ -676,6 +699,8 @@ class DosimeterApp:
         # Tab 1 — raw flip count (existing plot)
         self._fig = Figure(figsize=(10, 4), tight_layout=True)
         self._ax  = self._fig.add_subplot(111)
+        self._ax_temp = self._ax.twinx()
+        self._ax_temp.set_visible(False)
         self._canvas = FigureCanvasTkAgg(self._fig, master=tab1)
         self._canvas.get_tk_widget().grid(row=0, column=0, sticky='nsew')
         self._draw_empty_plot()
@@ -815,6 +840,8 @@ class DosimeterApp:
 
     def _draw_empty_plot(self):
         self._ax.clear()
+        self._ax_temp.clear()
+        self._ax_temp.set_visible(False)
         self._ax.set_xlabel('Time (s)')
         self._ax.set_ylabel('Bit Flips')
         self._ax.set_title('No data')
@@ -871,6 +898,7 @@ class DosimeterApp:
         self._pat_events.clear()
         self._rare_records.clear()
         self._raster_records.clear()
+        self._temp_records.clear()
         self._bg   = BackgroundModel()
         self._hang = HangDetector()
 
@@ -995,6 +1023,7 @@ class DosimeterApp:
 
         elif record['type'] == 'TEMP':
             self._slabels['temp'].config(text=f"Temp: {record['temp_c']} °C")
+            self._temp_records.append((record['ts_unix'], record['temp_c']))
 
         elif record['type'] == 'INTERVAL':
             self._log_append(f"Hold interval → {record['hold_s']} s", 'interval')
@@ -1045,10 +1074,11 @@ class DosimeterApp:
             is_alert = self._alert is not None and fc > self._alert
             tag = 'alert' if is_alert else 'flip'
             n_addrs = len(record.get('addrs', []))
+            temp_str = f"  temp={self._store.temp_c}°C" if self._store.temp_c is not None else ""
             self._log_append(
                 f"[{record['timestamp'][11:19]}] #{self._store.iteration:>4}  "
                 f"flips={fc:>10,}  addrs={n_addrs:>5}  hold={record['hold_s']}s  "
-                f"refresh={self._store.refresh_rate}", tag)
+                f"refresh={self._store.refresh_rate}{temp_str}", tag)
             if is_alert:
                 self._log_append(f'  ⚠ {fc:,} exceeds alert threshold {self._alert:,}', 'alert')
 
@@ -1074,6 +1104,9 @@ class DosimeterApp:
 
         ax = self._ax
         ax.clear()
+        ax_t = self._ax_temp
+        ax_t.clear()
+        ax_t.set_visible(False)
 
         for hold_s, color in HOLD_COLORS.items():
             mx = [x for x, h in zip(xs, hs) if h == hold_s]
@@ -1120,6 +1153,20 @@ class DosimeterApp:
                     f'n={len(ys)}\nmean={mean:.0f}\nstd={std:.0f}\nmin={min(ys)}\nmax={max(ys)}',
                     transform=ax.transAxes, fontsize=8, va='top', ha='right',
                     bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
+        # Temperature overlay (secondary right axis)
+        if self._temp_records and self._start_unix:
+            t_start = records[0]['ts_unix']
+            tx = [t - start for t, _ in self._temp_records if t >= t_start]
+            ty = [c for t, c in self._temp_records if t >= t_start]
+            if tx:
+                ax_t.set_visible(True)
+                ax_t.plot(tx, ty, color='#FF9800', linewidth=1.0,
+                          linestyle='--', alpha=0.75, label='Temp °C')
+                ax_t.set_ylabel('°C', color='#FF9800', fontsize=8)
+                ax_t.tick_params(axis='y', labelcolor='#FF9800', labelsize=7)
+                y_range = max(ty) - min(ty) if len(ty) > 1 else 1
+                ax_t.set_ylim(min(ty) - y_range * 0.5, max(ty) + y_range * 2)
 
         ax.set_xlabel('Time (s)')
         ax.set_ylabel('Bit Flips')

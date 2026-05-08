@@ -143,7 +143,6 @@
         .S00_AXI_0_arsize   (3'b010),
         .S00_AXI_0_wlast    (1'b1),
         .reset_0            (~reset),
-        .ext_refresh_tick   (refresh_tick_out),
         .device_temp_0      (device_temp)
     );
     

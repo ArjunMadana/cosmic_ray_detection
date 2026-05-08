@@ -1,28 +1,21 @@
 # expose_device_temp.tcl
 #
-# Threads two signals through the Vivado-generated block design wrapper:
-#   device_temp_0  [11:0] output  — on-chip die temperature from MIG XADC
-#   ext_refresh_tick       input  — external DRAM refresh tick from FSM
+# Exposes the MIG XADC die temperature through the Vivado-generated BD wrapper:
+#   device_temp_0  [11:0]  output  — on-chip die temperature from MIG XADC
 #
-# These ports are not accessible via the BD GUI or make_bd_pins_external
-# because the MIG IP does not expose them in its BD interface definition.
-# This script edits the generated Verilog files directly instead.
+# The MIG IP does not expose device_temp in its BD interface definition, so
+# this script edits the two generated Verilog files directly after each
+# generate_target call.  It is registered as a pre-synthesis hook in synth_1
+# so it runs automatically — you do not need to call it manually.
 #
-# MUST BE RE-RUN whenever you call "generate_target" or "make_wrapper" on
-# the cosmic_bd block design, as those commands overwrite the edited files.
-#
-# Usage (Vivado TCL console, project open):
+# If you need to run it manually (Vivado TCL console, project open):
 #   source {c:/_CAMSIN/cosmic_ray_detection/tools/expose_device_temp.tcl}
-#
-# Usage (batch, from project root):
-#   vivado -mode batch -source tools/expose_device_temp.tcl
 
 # ---------------------------------------------------------------------------
 # Locate the generated files
 # ---------------------------------------------------------------------------
 
-# Derive project root from the open project, so this works regardless of
-# Vivado's current working directory (which defaults to AppData, not the project).
+# Derive project root from the open project — works regardless of Vivado's CWD.
 set proj_dir [get_property DIRECTORY [current_project]]
 set bd_root  [file normalize "$proj_dir/cosmic_ray_detection.gen/sources_1/bd/cosmic_bd"]
 set synth_v  "$bd_root/synth/cosmic_bd.v"
@@ -60,26 +53,26 @@ proc write_file {path content} {
 puts "Patching $synth_v ..."
 set txt [read_file $synth_v]
 
-# 1. Add ports to the module port list (after init_calib_complete_0)
+# 1. Add device_temp_0 to the module port list
 if {![string match "*device_temp_0*" $txt]} {
     regsub {(    init_calib_complete_0,)} $txt \
-        "    device_temp_0,\n    ext_refresh_tick,\n\\1" txt
-    puts "  Added device_temp_0 and ext_refresh_tick to port list."
+        "    device_temp_0,\n\\1" txt
+    puts "  Added device_temp_0 to port list."
 } else {
     puts "  Port list already patched."
 }
 
-# 2. Add port direction declarations (after the last S00_AXI wvalid line)
-# Use string first (exact substring) not string match (glob) — glob misparses [11:0] as a char class.
+# 2. Add port direction declaration
+# Use string first (exact substring) — string match glob misparses [11:0] as a char class.
 if {[string first "output \[11:0\]device_temp_0" $txt] < 0} {
     regsub {(  output init_calib_complete_0;)} $txt \
-        "  output \[11:0\]device_temp_0;\n  input ext_refresh_tick;\n\\1" txt
-    puts "  Added port declarations."
+        "  output \[11:0\]device_temp_0;\n\\1" txt
+    puts "  Added port declaration."
 } else {
-    puts "  Port declarations already present."
+    puts "  Port declaration already present."
 }
 
-# 3. Add wire declaration for MIG device_temp signal
+# 3. Add wire for the MIG device_temp signal
 if {![string match "*mig_7series_0_device_temp*" $txt]} {
     regsub {(  wire mig_7series_0_init_calib_complete;)} $txt \
         "  wire \[11:0\]mig_7series_0_device_temp;\n\\1" txt
@@ -88,7 +81,7 @@ if {![string match "*mig_7series_0_device_temp*" $txt]} {
     puts "  Wire already declared."
 }
 
-# 4. Add assign for device_temp_0 output
+# 4. Assign device_temp_0 from the internal wire
 if {![string match "*assign device_temp_0*" $txt]} {
     regsub {(  assign init_calib_complete_0 = mig_7series_0_init_calib_complete;)} $txt \
         "  assign device_temp_0 = mig_7series_0_device_temp;\n\\1" txt
@@ -97,11 +90,11 @@ if {![string match "*assign device_temp_0*" $txt]} {
     puts "  Assign already present."
 }
 
-# 5. Connect ports in MIG instantiation (before sys_clk_i)
+# 5. Connect .device_temp in the MIG instantiation
 if {![string match "*.device_temp(mig_7series_0_device_temp)*" $txt]} {
     regsub {(        \.sys_clk_i\(clk_wiz_0_clk_out1\))} $txt \
-        "        .device_temp(mig_7series_0_device_temp),\n        .ext_refresh_tick(ext_refresh_tick),\n\\1" txt
-    puts "  Connected device_temp and ext_refresh_tick in MIG instance."
+        "        .device_temp(mig_7series_0_device_temp),\n\\1" txt
+    puts "  Connected .device_temp in MIG instance."
 } else {
     puts "  MIG instance already connected."
 }
@@ -116,38 +109,38 @@ puts "Wrote $synth_v"
 puts "\nPatching $wrapper ..."
 set txt [read_file $wrapper]
 
-# 1. Add to port list
+# 1. Add device_temp_0 to the module port list
 if {![string match "*device_temp_0*" $txt]} {
     regsub {(    init_calib_complete_0,)} $txt \
-        "    device_temp_0,\n    ext_refresh_tick,\n\\1" txt
-    puts "  Added device_temp_0 and ext_refresh_tick to port list."
+        "    device_temp_0,\n\\1" txt
+    puts "  Added device_temp_0 to port list."
 } else {
     puts "  Port list already patched."
 }
 
-# 2. Add port direction declarations
+# 2. Add port direction declaration
 if {[string first "output \[11:0\]device_temp_0" $txt] < 0} {
     regsub {(  output init_calib_complete_0;)} $txt \
-        "  output \[11:0\]device_temp_0;\n  input ext_refresh_tick;\n\\1" txt
-    puts "  Added port declarations."
+        "  output \[11:0\]device_temp_0;\n\\1" txt
+    puts "  Added port declaration."
 } else {
-    puts "  Port declarations already present."
+    puts "  Port declaration already present."
 }
 
-# 3. Add wire declarations (after the existing 'wire ui_clk_0;' line)
+# 3. Add wire declaration
 if {[string first "wire \[11:0\]device_temp_0" $txt] < 0} {
     regsub {(  wire ui_clk_0;)} $txt \
-        "\\1\n  wire \[11:0\]device_temp_0;\n  wire ext_refresh_tick;" txt
-    puts "  Added wire declarations."
+        "\\1\n  wire \[11:0\]device_temp_0;" txt
+    puts "  Added wire declaration."
 } else {
-    puts "  Wires already declared."
+    puts "  Wire already declared."
 }
 
-# 4. Connect in cosmic_bd instantiation (before .init_calib_complete_0)
+# 4. Connect .device_temp_0 in the cosmic_bd instantiation
 if {![string match "*.device_temp_0(device_temp_0)*" $txt]} {
     regsub {(        \.init_calib_complete_0\(init_calib_complete_0\))} $txt \
-        "        .device_temp_0(device_temp_0),\n        .ext_refresh_tick(ext_refresh_tick),\n\\1" txt
-    puts "  Connected ports in cosmic_bd instance."
+        "        .device_temp_0(device_temp_0),\n\\1" txt
+    puts "  Connected .device_temp_0 in cosmic_bd instance."
 } else {
     puts "  cosmic_bd instance already connected."
 }
@@ -160,8 +153,6 @@ puts "Wrote $wrapper"
 # ---------------------------------------------------------------------------
 
 puts ""
-puts "Done. Both generated files are patched."
-puts "cosmic_bd_wrapper.v now exposes: device_temp_0\[11:0\] and ext_refresh_tick"
-puts ""
-puts "NOTE: Re-run this script if you ever call generate_target or make_wrapper"
-puts "      on the cosmic_bd block design."
+puts "Done. cosmic_bd_wrapper.v now exposes: device_temp_0\[11:0\]"
+puts "NOTE: This script re-runs automatically before each synthesis via the"
+puts "      STEPS.SYNTH_DESIGN.TCL.PRE hook registered in synth_1."
