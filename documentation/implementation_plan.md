@@ -13,6 +13,11 @@ Last updated: 2026-05-24
 - Added address capture overflow reporting.
 - Added cycle diagnostics for first-read and pattern-change investigation.
 - Added standalone diagnostic runner `tools/run_diagnostics.py` for live UART sweeps and JSONL replay classification.
+- Removed divider/modulo hold-time formatting from the UART print path after routed timing showed `uart_data` setup violations.
+- Removed the `H<n>` seconds-to-cycles DSP multiply from the firmware control path; hold timing now counts UI-clock ticks into elapsed seconds.
+- Staged scan mismatches before writing the address-capture buffer after routed timing showed SmartConnect read-response paths driving distributed RAM write enables.
+- Staged address streaming through a dedicated word register after routed timing showed the address-buffer read path feeding the shared report register.
+- Added a two-cycle UART print-start guard and matching multicycle constraints for print selector/index paths feeding `uart_data` and printed-line end paths feeding `state`.
 - Routed replayed FLIP records through the same background, rare-event, raster, temperature, and clustering logic as live data.
 - Updated batch programming scripts to open the project when no Vivado project is already open.
 - Added Python parser/storage tests.

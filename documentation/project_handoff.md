@@ -66,6 +66,24 @@ python -B tools/run_diagnostics.py --replay data/experiment_20260424_104838.json
 
 The 2026-04-24 capture predates `DIAG`, so it can show the first-read spike but is classified as `NO_DIAG` for root-cause localization.
 
+If the board LEDs indicate calibration completed but `READY` is not seen, use raw UART probe mode:
+
+```bash
+python -B tools/run_diagnostics.py --port COM3 --probe --probe-send-reset --verbose-raw
+```
+
+The probe prints received bytes in hex and ASCII while periodically sending `X`.
+
+If bytes are present but unreadable, scan likely baud rates:
+
+```bash
+python -B tools/run_diagnostics.py --port COM3 --scan-baud --probe-seconds 5
+```
+
+The scan includes common rates plus non-standard rates around 1.04 Mbaud because the observed unreadable `READY` bytes match a baud-ratio error in that range.
+
+If no scanned baud produces readable ASCII while both status LEDs are on, inspect the routed timing report before chasing baud settings. A routed build with `WNS < 0` can corrupt UART-visible behavior even though DDR calibration succeeds. Current timing fixes in source: the firmware stores hold-time BCD digits when `H<n>` is parsed instead of formatting with divider/modulo logic during UART printing, hold timing counts elapsed seconds instead of multiplying seconds into cycles in one clock, scan mismatches are staged for one cycle before writing the address-capture buffer so SmartConnect read-response paths do not directly drive distributed RAM write enables, address streaming uses a dedicated staged word register instead of loading the shared report register directly from the address buffer, and UART text printing has a two-cycle start guard plus matching multicycle constraints for print selector/index paths into `uart_data` and printed-line end paths into `state`.
+
 ## Generated Vivado Patch
 
 The generated BD files do not naturally expose MIG `device_temp` or route the custom refresh tick. The pre-synthesis hook patches:
@@ -84,7 +102,7 @@ The final patched behavior is `rank_common.refresh_tick = ext_refresh_tick`.
 
 ## Flashing Notes
 
-`tools/flash_board.tcl` generates `cosmic_top.mcs` from the current implementation bitstream, creates the Arty S7 SPI cfgmem object, binds it to the FPGA device with `PROGRAM.HW_CFGMEM`, loads Vivado's temporary flash programmer bitstream when required, and then runs `program_hw_cfgmem`.
+`tools/flash_board.tcl` generates `cosmic_top.mcs` from the current implementation bitstream, creates the Arty S7 SPI cfgmem object, reads the resulting `PROGRAM.HW_CFGMEM` object from the FPGA device, loads Vivado's temporary flash programmer bitstream, and then runs `program_hw_cfgmem`.
 
 If `flash_board.log` reports `Flash Programming Unsuccessful: Failure to set flash parameters`, retry with the updated script. The bitstream-to-MCS step can still succeed even when the later SPI programmer setup fails.
 

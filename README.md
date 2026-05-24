@@ -41,6 +41,18 @@ To classify an existing capture:
 python -B tools/run_diagnostics.py --replay data/experiment_20260424_104838.jsonl
 ```
 
+If both status LEDs are on but the diagnostic runner times out waiting for `READY`, inspect raw UART traffic:
+
+```bash
+python -B tools/run_diagnostics.py --port COM3 --probe --probe-send-reset --verbose-raw
+```
+
+If raw bytes are present but unreadable, scan common baud rates:
+
+```bash
+python -B tools/run_diagnostics.py --port COM3 --scan-baud --probe-seconds 5
+```
+
 ## Control Model
 
 Experiment control is UART-only:

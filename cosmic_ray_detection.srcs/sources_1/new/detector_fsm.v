@@ -65,8 +65,7 @@ module detector_fsm #(
     input wire [11:0]  temp_raw
 );
 
-localparam [63:0] UI_CLK_HZ_64         = {32'd0, UI_CLK_HZ};
-localparam [63:0] DEFAULT_HOLD_CYCLES  = UI_CLK_HZ_64 * 64'd5;
+localparam [31:0] HOLD_SECOND_TICKS    = UI_CLK_HZ - 1;
 localparam [31:0] REF_OFF              = 32'd0;
 localparam [31:0] REF_SLOW             = UI_CLK_HZ / 32'd10;      // ~100 ms
 localparam [31:0] REF_NORMAL           = UI_CLK_HZ / 32'd128205;  // ~7.8 us
@@ -114,8 +113,8 @@ reg [27:0] addr;
 reg [31:0] hit_counter;
 reg [31:0] report_shift;
 reg [11:0] temp_shift;
-reg [63:0] hold_counter;
-reg [63:0] hold_cycles_sel;
+reg [31:0] hold_tick_counter;
+reg [15:0] hold_sec_counter;
 reg [15:0] hold_sec_val;
 
 reg [31:0] refresh_counter;
@@ -126,6 +125,14 @@ reg [1:0]  refresh_print_sel;
 reg [1:0]  cmd_kind;
 reg [15:0] cmd_acc;
 reg [3:0]  cmd_digit;
+reg [3:0]  cmd_dig3;
+reg [3:0]  cmd_dig2;
+reg [3:0]  cmd_dig1;
+reg [3:0]  cmd_dig0;
+reg [3:0]  hold_dig3;
+reg [3:0]  hold_dig2;
+reg [3:0]  hold_dig1;
+reg [3:0]  hold_dig0;
 
 reg        interval_changed;
 reg        pat_changed;
@@ -137,6 +144,7 @@ reg [27:0] addr_buf [0:4095];
 reg [12:0] buf_count;
 reg [12:0] buf_rd_count;
 reg [11:0] buf_rd_ptr;
+reg [27:0] buf_stream_word;
 reg        stream_body;
 reg        addr_overflow;
 reg [31:0] addr_overflow_count;
@@ -150,16 +158,18 @@ reg [27:0] first_bad_addr;
 reg [31:0] first_bad_got;
 reg [31:0] first_bad_exp;
 reg        first_bad_valid;
+reg        mismatch_pending;
+reg [27:0] mismatch_addr;
+reg [31:0] mismatch_got;
+reg [31:0] mismatch_exp;
+reg        scan_done_pending;
+reg [31:0] scan_done_hits;
 
 reg [7:0]  print_idx;
 reg [7:0]  print_len;
 reg [4:0]  print_next_state;
 reg [3:0]  print_kind;
-
-wire [3:0] dig3 = hold_sec_val / 1000;
-wire [3:0] dig2 = (hold_sec_val % 1000) / 100;
-wire [3:0] dig1 = (hold_sec_val % 100) / 10;
-wire [3:0] dig0 = hold_sec_val % 10;
+reg [1:0]  print_wait;
 
 function [7:0] hex_digit;
     input [3:0] nibble;
@@ -252,10 +262,10 @@ function [7:0] print_byte;
                 else if (idx == 6)  print_byte = "A";
                 else if (idx == 7)  print_byte = "L";
                 else if (idx == 8)  print_byte = ":";
-                else if (idx == 9)  print_byte = "0" + {4'd0, dig3};
-                else if (idx == 10) print_byte = "0" + {4'd0, dig2};
-                else if (idx == 11) print_byte = "0" + {4'd0, dig1};
-                else if (idx == 12) print_byte = "0" + {4'd0, dig0};
+                else if (idx == 9)  print_byte = "0" + {4'd0, hold_dig3};
+                else if (idx == 10) print_byte = "0" + {4'd0, hold_dig2};
+                else if (idx == 11) print_byte = "0" + {4'd0, hold_dig1};
+                else if (idx == 12) print_byte = "0" + {4'd0, hold_dig0};
                 else if (idx == 13) print_byte = "s";
                 else if (idx == 14) print_byte = 8'h0D;
                 else                print_byte = 8'h0A;
@@ -314,10 +324,10 @@ function [7:0] print_byte;
                 else if (idx == 2)  print_byte = "L";
                 else if (idx == 3)  print_byte = "D";
                 else if (idx == 4)  print_byte = ":";
-                else if (idx == 5)  print_byte = "0" + {4'd0, dig3};
-                else if (idx == 6)  print_byte = "0" + {4'd0, dig2};
-                else if (idx == 7)  print_byte = "0" + {4'd0, dig1};
-                else if (idx == 8)  print_byte = "0" + {4'd0, dig0};
+                else if (idx == 5)  print_byte = "0" + {4'd0, hold_dig3};
+                else if (idx == 6)  print_byte = "0" + {4'd0, hold_dig2};
+                else if (idx == 7)  print_byte = "0" + {4'd0, hold_dig1};
+                else if (idx == 8)  print_byte = "0" + {4'd0, hold_dig0};
                 else if (idx == 9)  print_byte = "s";
                 else if (idx == 10) print_byte = " ";
                 else if (idx == 11) print_byte = "P";
@@ -429,14 +439,22 @@ always @(posedge clk) begin
         uart_valid          <= 0;
         led0                <= 0;
         led1                <= 0;
-        hold_counter        <= 0;
-        hold_cycles_sel     <= DEFAULT_HOLD_CYCLES;
+        hold_tick_counter   <= 0;
+        hold_sec_counter    <= 0;
         hold_sec_val        <= 16'd5;
         refresh_sel         <= 2'd0;
         refresh_print_sel   <= 2'd0;
         cmd_kind            <= CMD_NONE;
         cmd_acc             <= 0;
         cmd_digit           <= 0;
+        cmd_dig3            <= 0;
+        cmd_dig2            <= 0;
+        cmd_dig1            <= 0;
+        cmd_dig0            <= 0;
+        hold_dig3           <= 0;
+        hold_dig2           <= 0;
+        hold_dig1           <= 0;
+        hold_dig0           <= 5;
         interval_changed    <= 0;
         pat_changed         <= 0;
         refresh_changed     <= 0;
@@ -447,6 +465,7 @@ always @(posedge clk) begin
         buf_count           <= 0;
         buf_rd_count        <= 0;
         buf_rd_ptr          <= 0;
+        buf_stream_word     <= 0;
         stream_body         <= 0;
         addr_overflow       <= 0;
         addr_overflow_count <= 0;
@@ -459,12 +478,19 @@ always @(posedge clk) begin
         first_bad_got       <= 0;
         first_bad_exp       <= 0;
         first_bad_valid     <= 0;
+        mismatch_pending    <= 0;
+        mismatch_addr       <= 0;
+        mismatch_got        <= 0;
+        mismatch_exp        <= 0;
+        scan_done_pending   <= 0;
+        scan_done_hits      <= 0;
         report_shift        <= 0;
         temp_shift          <= 0;
         print_idx           <= 0;
         print_len           <= 0;
         print_next_state    <= WAIT_GO;
         print_kind          <= PK_READY;
+        print_wait          <= 0;
     end else begin
         led0 <= calib_complete;
         led1 <= (state != WAIT_INIT);
@@ -477,6 +503,10 @@ always @(posedge clk) begin
             end else if (rx_data == "H") begin
                 cmd_kind <= CMD_H;
                 cmd_acc  <= 0;
+                cmd_dig3 <= 0;
+                cmd_dig2 <= 0;
+                cmd_dig1 <= 0;
+                cmd_dig0 <= 0;
             end else if (rx_data == "P") begin
                 cmd_kind <= CMD_P;
             end else if (rx_data == "R") begin
@@ -484,8 +514,13 @@ always @(posedge clk) begin
             end else if (rx_data >= "0" && rx_data <= "9") begin
                 cmd_digit <= rx_data[3:0];
                 if (cmd_kind == CMD_H) begin
-                    if (cmd_acc < 16'd1000)
+                    if (cmd_acc < 16'd1000) begin
                         cmd_acc <= (cmd_acc * 10) + {12'd0, rx_data[3:0]};
+                        cmd_dig3 <= cmd_dig2;
+                        cmd_dig2 <= cmd_dig1;
+                        cmd_dig1 <= cmd_dig0;
+                        cmd_dig0 <= rx_data[3:0];
+                    end
                 end else if (cmd_kind == CMD_P && rx_data <= "3") begin
                     pattern_sel <= rx_data[1:0];
                 end else if (cmd_kind == CMD_R && rx_data <= "3") begin
@@ -495,7 +530,10 @@ always @(posedge clk) begin
             end else if (rx_data == 8'h0A) begin
                 if (cmd_kind == CMD_H && cmd_acc > 0) begin
                     hold_sec_val    <= cmd_acc;
-                    hold_cycles_sel <= {48'd0, cmd_acc} * UI_CLK_HZ_64;
+                    hold_dig3       <= cmd_dig3;
+                    hold_dig2       <= cmd_dig2;
+                    hold_dig1       <= cmd_dig1;
+                    hold_dig0       <= cmd_dig0;
                     interval_changed <= 1;
                 end else if (cmd_kind == CMD_P) begin
                     pat_changed <= 1;
@@ -512,7 +550,8 @@ always @(posedge clk) begin
             reset_flag       <= 0;
             go_flag          <= 0;
             hit_counter      <= 0;
-            hold_counter     <= 0;
+            hold_tick_counter <= 0;
+            hold_sec_counter <= 0;
             addr             <= 0;
             awvalid          <= 0;
             wvalid           <= 0;
@@ -522,10 +561,15 @@ always @(posedge clk) begin
             buf_count        <= 0;
             buf_rd_count     <= 0;
             buf_rd_ptr       <= 0;
+            buf_stream_word  <= 0;
             stream_body      <= 0;
+            mismatch_pending <= 0;
+            scan_done_pending <= 0;
             state            <= PRINT;
             print_kind       <= PK_READY;
             print_len        <= 8'd7;
+            print_idx        <= 0;
+            print_wait       <= 2;
             print_next_state <= WAIT_GO;
         end else begin
             case (state)
@@ -535,6 +579,7 @@ always @(posedge clk) begin
                         print_kind       <= PK_READY;
                         print_len        <= 8'd7;
                         print_idx        <= 0;
+                        print_wait       <= 2;
                         print_next_state <= WAIT_GO;
                     end
                 end
@@ -546,6 +591,7 @@ always @(posedge clk) begin
                         print_kind       <= PK_INT;
                         print_len        <= 8'd16;
                         print_idx        <= 0;
+                        print_wait       <= 2;
                         print_next_state <= WAIT_GO;
                     end else if (pat_changed) begin
                         pat_changed      <= 0;
@@ -553,6 +599,7 @@ always @(posedge clk) begin
                         print_kind       <= PK_PAT;
                         print_len        <= 8'd12;
                         print_idx        <= 0;
+                        print_wait       <= 2;
                         print_next_state <= WAIT_GO;
                     end else if (refresh_changed) begin
                         refresh_changed  <= 0;
@@ -560,18 +607,22 @@ always @(posedge clk) begin
                         print_kind       <= PK_REF;
                         print_len        <= 8'd14;
                         print_idx        <= 0;
+                        print_wait       <= 2;
                         print_next_state <= WAIT_GO;
                     end else if (go_flag) begin
                         go_flag             <= 0;
                         fill_pattern_sel    <= pattern_sel;
                         addr                <= 0;
-                        hold_counter        <= 0;
+                        hold_tick_counter   <= 0;
+                        hold_sec_counter    <= 0;
                         fill1_resp_count    <= 0;
                         fill2_resp_count    <= 0;
                         scan_resp_count     <= 0;
                         bresp_error_count   <= 0;
                         rresp_error_count   <= 0;
                         first_bad_valid     <= 0;
+                        mismatch_pending    <= 0;
+                        scan_done_pending   <= 0;
                         addr_overflow       <= 0;
                         addr_overflow_count <= 0;
                         buf_count           <= 0;
@@ -630,6 +681,7 @@ always @(posedge clk) begin
                         print_kind       <= PK_INT;
                         print_len        <= 8'd16;
                         print_idx        <= 0;
+                        print_wait       <= 2;
                         print_next_state <= HOLD;
                     end else if (pat_changed) begin
                         pat_changed      <= 0;
@@ -637,6 +689,7 @@ always @(posedge clk) begin
                         print_kind       <= PK_PAT;
                         print_len        <= 8'd12;
                         print_idx        <= 0;
+                        print_wait       <= 2;
                         print_next_state <= HOLD;
                     end else if (refresh_changed) begin
                         refresh_changed  <= 0;
@@ -644,62 +697,86 @@ always @(posedge clk) begin
                         print_kind       <= PK_REF;
                         print_len        <= 8'd14;
                         print_idx        <= 0;
+                        print_wait       <= 2;
                         print_next_state <= HOLD;
-                    end else if (hold_counter >= hold_cycles_sel) begin
+                    end else if (hold_sec_counter >= hold_sec_val) begin
                         state               <= SCAN;
                         addr                <= 0;
                         hit_counter         <= 0;
-                        hold_counter        <= 0;
+                        hold_tick_counter   <= 0;
+                        hold_sec_counter    <= 0;
                         buf_count           <= 0;
                         addr_overflow       <= 0;
                         addr_overflow_count <= 0;
+                        mismatch_pending    <= 0;
+                        scan_done_pending   <= 0;
+                    end else if (hold_tick_counter >= HOLD_SECOND_TICKS) begin
+                        hold_tick_counter <= 0;
+                        hold_sec_counter  <= hold_sec_counter + 1;
                     end else begin
-                        hold_counter <= hold_counter + 1;
+                        hold_tick_counter <= hold_tick_counter + 1;
                     end
                 end
 
                 SCAN: begin
-                    if (!arvalid && !rvalid) begin
-                        araddr  <= addr;
-                        arvalid <= 1;
-                    end
-                    if (arvalid && arready) arvalid <= 0;
-                    if (rvalid) begin
-                        scan_resp_count <= scan_resp_count + 1;
-                        if (rresp != 2'b00) rresp_error_count <= rresp_error_count + 1;
-                        if (rdata != active_pattern) begin
-                            hit_counter <= hit_counter + 1;
-                            if (!first_bad_valid) begin
-                                first_bad_valid <= 1;
-                                first_bad_addr  <= addr;
-                                first_bad_got   <= rdata;
-                                first_bad_exp   <= active_pattern;
-                            end
-                            if (buf_count < ADDR_BUF_CAPACITY) begin
-                                addr_buf[buf_count[11:0]] <= addr;
-                                buf_count                 <= buf_count + 1;
-                            end else begin
-                                addr_overflow       <= 1;
-                                addr_overflow_count <= addr_overflow_count + 1;
-                            end
+                    if (mismatch_pending) begin
+                        mismatch_pending <= 0;
+                        hit_counter      <= hit_counter + 1;
+                        if (!first_bad_valid) begin
+                            first_bad_valid <= 1;
+                            first_bad_addr  <= mismatch_addr;
+                            first_bad_got   <= mismatch_got;
+                            first_bad_exp   <= mismatch_exp;
                         end
-                        if (addr >= MEM_SIZE - 4) begin
-                            state        <= STREAM_ADDRS;
-                            report_shift <= (rdata != active_pattern) ? hit_counter + 1 : hit_counter;
-                            print_kind   <= PK_ADDRHDR;
-                            print_len    <= 8'd18;
-                            print_idx    <= 0;
-                            buf_rd_count <= 0;
-                            buf_rd_ptr   <= 0;
-                            stream_body  <= 0;
+                        if (buf_count < ADDR_BUF_CAPACITY) begin
+                            addr_buf[buf_count[11:0]] <= mismatch_addr;
+                            buf_count                 <= buf_count + 1;
                         end else begin
-                            addr <= addr + 4;
+                            addr_overflow       <= 1;
+                            addr_overflow_count <= addr_overflow_count + 1;
+                        end
+                    end else if (scan_done_pending) begin
+                        scan_done_pending <= 0;
+                        state             <= STREAM_ADDRS;
+                        report_shift      <= scan_done_hits;
+                        print_kind        <= PK_ADDRHDR;
+                        print_len         <= 8'd18;
+                        print_idx         <= 0;
+                        print_wait        <= 2;
+                        buf_rd_count      <= 0;
+                        buf_rd_ptr        <= 0;
+                        buf_stream_word   <= 0;
+                        stream_body       <= 0;
+                    end else begin
+                        if (!arvalid && !rvalid) begin
+                            araddr  <= addr;
+                            arvalid <= 1;
+                        end
+                        if (arvalid && arready) arvalid <= 0;
+                        if (rvalid) begin
+                            scan_resp_count <= scan_resp_count + 1;
+                            if (rresp != 2'b00) rresp_error_count <= rresp_error_count + 1;
+                            if (rdata != active_pattern) begin
+                                mismatch_pending <= 1;
+                                mismatch_addr    <= addr;
+                                mismatch_got     <= rdata;
+                                mismatch_exp     <= active_pattern;
+                            end
+                            if (addr >= MEM_SIZE - 4) begin
+                                scan_done_pending <= 1;
+                                scan_done_hits    <= (rdata != active_pattern) ? hit_counter + 1 : hit_counter;
+                            end else begin
+                                addr <= addr + 4;
+                            end
                         end
                     end
                 end
 
                 STREAM_ADDRS: begin
-                    if (uart_ready && !uart_valid) begin
+                    if (!stream_body && print_wait != 0) begin
+                        uart_valid <= 0;
+                        print_wait <= print_wait - 1;
+                    end else if (uart_ready && !uart_valid) begin
                         if (!stream_body) begin
                             if (print_idx < print_len) begin
                                 uart_data  <= print_byte(PK_ADDRHDR, print_idx);
@@ -712,6 +789,7 @@ always @(posedge clk) begin
                                     state            <= PRINT;
                                     print_kind       <= PK_REPORT;
                                     print_len        <= 8'd34;
+                                    print_wait       <= 2;
                                     print_next_state <= PRINT_TEMP;
                                 end else begin
                                     stream_body <= 1;
@@ -719,14 +797,14 @@ always @(posedge clk) begin
                             end
                         end else begin
                             if (print_idx == 0) begin
-                                report_shift <= {4'd0, addr_buf[buf_rd_ptr]};
-                                uart_valid   <= 0;
-                                print_idx    <= 1;
+                                buf_stream_word <= addr_buf[buf_rd_ptr];
+                                uart_valid      <= 0;
+                                print_idx       <= 1;
                             end else if (print_idx >= 1 && print_idx <= 7) begin
-                                uart_valid   <= 1;
-                                uart_data    <= hex_digit(report_shift[27:24]);
-                                report_shift <= {report_shift[23:0], 4'b0};
-                                print_idx    <= print_idx + 1;
+                                uart_valid      <= 1;
+                                uart_data       <= hex_digit(buf_stream_word[27:24]);
+                                buf_stream_word <= {buf_stream_word[23:0], 4'b0};
+                                print_idx       <= print_idx + 1;
                             end else if (print_idx == 8) begin
                                 uart_valid <= 1;
                                 uart_data  <= 8'h0D;
@@ -741,6 +819,7 @@ always @(posedge clk) begin
                                     state            <= PRINT;
                                     print_kind       <= PK_REPORT;
                                     print_len        <= 8'd34;
+                                    print_wait       <= 2;
                                     print_next_state <= PRINT_TEMP;
                                 end else begin
                                     buf_rd_count <= buf_rd_count + 1;
@@ -755,7 +834,10 @@ always @(posedge clk) begin
                 end
 
                 PRINT: begin
-                    if (uart_ready && !uart_valid) begin
+                    if (print_wait != 0) begin
+                        uart_valid <= 0;
+                        print_wait <= print_wait - 1;
+                    end else if (uart_ready && !uart_valid) begin
                         if (print_idx < print_len) begin
                             uart_data  <= print_byte(print_kind, print_idx);
                             uart_valid <= 1;
@@ -776,6 +858,7 @@ always @(posedge clk) begin
                     print_kind       <= PK_TEMP;
                     print_len        <= 8'd10;
                     print_idx        <= 0;
+                    print_wait       <= 2;
                     print_next_state <= PRINT_DIAG;
                 end
 
@@ -784,6 +867,7 @@ always @(posedge clk) begin
                     print_kind       <= PK_DIAG;
                     print_len        <= 8'd114;
                     print_idx        <= 0;
+                    print_wait       <= 2;
                     print_next_state <= SETTLE;
                 end
 
@@ -791,10 +875,13 @@ always @(posedge clk) begin
                     awvalid <= 0;
                     wvalid  <= 0;
                     arvalid <= 0;
+                    mismatch_pending  <= 0;
+                    scan_done_pending <= 0;
                     if (!bvalid && !rvalid) begin
                         addr             <= 0;
                         hit_counter      <= 0;
-                        hold_counter     <= 0;
+                        hold_tick_counter <= 0;
+                        hold_sec_counter <= 0;
                         fill_pattern_sel <= pattern_sel;
                         fill1_resp_count <= 0;
                         fill2_resp_count <= 0;

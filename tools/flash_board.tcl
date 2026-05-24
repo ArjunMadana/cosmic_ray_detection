@@ -65,8 +65,14 @@ if {[llength $flash_parts] == 0} {
     return
 }
 
-set flash [create_hw_cfgmem -hw_device $device [lindex $flash_parts 0]]
-set_property PROGRAM.HW_CFGMEM $flash $device
+create_hw_cfgmem -hw_device $device [lindex $flash_parts 0]
+set flash [get_property PROGRAM.HW_CFGMEM $device]
+if {$flash eq ""} {
+    puts "ERROR: Failed to create SPI flash programming object."
+    close_hw_target
+    disconnect_hw_server
+    return
+}
 
 set_property PROGRAM.ADDRESS_RANGE          {use_file}       $flash
 set_property PROGRAM.FILES                  [list $mcsfile]  $flash
@@ -79,12 +85,10 @@ set_property PROGRAM.VERIFY                 1                $flash
 set_property PROGRAM.CHECKSUM               0                $flash
 
 startgroup
-if {![string equal [get_property PROGRAM.HW_CFGMEM_TYPE $device] [get_property MEM_TYPE $flash]]} {
-    puts "Loading temporary flash programmer bitstream..."
-    create_hw_bitstream -hw_device $device [get_property PROGRAM.HW_CFGMEM_BITFILE $device]
-    program_hw_devices $device
-    refresh_hw_device $device
-}
+puts "Loading temporary flash programmer bitstream..."
+create_hw_bitstream -hw_device $device [get_property PROGRAM.HW_CFGMEM_BITFILE $device]
+program_hw_devices $device
+refresh_hw_device $device
 
 program_hw_cfgmem -hw_cfgmem $flash
 endgroup

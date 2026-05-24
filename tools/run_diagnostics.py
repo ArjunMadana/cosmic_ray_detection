@@ -336,15 +336,83 @@ def read_serial_record(ser):
     return parse_line(raw)
 
 
+def raw_display(data):
+    text = data.decode("ascii", errors="replace").replace("\r", "\\r").replace("\n", "\\n")
+    hex_text = " ".join(f"{b:02X}" for b in data)
+    return f"{hex_text}    {text}"
+
+
+def probe_serial(args):
+    if not SERIAL_AVAILABLE:
+        raise SystemExit("pyserial is required for serial probing. Install tools/requirements.txt.")
+    port = args.port
+    if port == "auto":
+        port = find_arty_port()
+    if not port:
+        raise SystemExit("No serial port found. Use --port COMx.")
+
+    print(f"Probing {port} @ {args.baud} for {args.probe_seconds:g}s")
+    print("Press the board PROG/power-cycle during this window if you want to catch boot text.")
+    deadline = time.time() + args.probe_seconds
+    next_reset = time.time()
+    with serial.Serial(port, args.baud, timeout=0.2) as ser:
+        ser.reset_input_buffer()
+        while time.time() < deadline:
+            if args.probe_send_reset and time.time() >= next_reset:
+                ser.write(b"X")
+                ser.flush()
+                print("TX: X")
+                next_reset = time.time() + args.probe_reset_interval
+            raw = ser.readline()
+            if raw:
+                print(f"RX: {raw_display(raw)}")
+
+
+def baud_scan(args):
+    if not SERIAL_AVAILABLE:
+        raise SystemExit("pyserial is required for baud scanning. Install tools/requirements.txt.")
+    port = args.port
+    if port == "auto":
+        port = find_arty_port()
+    if not port:
+        raise SystemExit("No serial port found. Use --port COMx.")
+
+    bauds = [int(b.strip(), 0) for b in args.baud_scan.split(",") if b.strip()]
+    for baud in bauds:
+        print(f"\n=== {port} @ {baud} ===")
+        deadline = time.time() + args.probe_seconds
+        next_reset = time.time()
+        with serial.Serial(port, baud, timeout=0.2) as ser:
+            ser.reset_input_buffer()
+            saw_rx = False
+            while time.time() < deadline:
+                if time.time() >= next_reset:
+                    ser.write(b"X")
+                    ser.flush()
+                    print("TX: X")
+                    next_reset = time.time() + args.probe_reset_interval
+                raw = ser.readline()
+                if raw:
+                    saw_rx = True
+                    print(f"RX: {raw_display(raw)}")
+        if not saw_rx:
+            print("RX: <none>")
+
+
 def write_serial(ser, text):
     ser.write(text.encode("ascii"))
     ser.flush()
 
 
-def wait_for_ready(ser, writer, timeout_s):
+def wait_for_ready(ser, writer, timeout_s, echo_raw=False):
     deadline = time.time() + timeout_s
     while time.time() < deadline:
-        record = read_serial_record(ser)
+        raw = ser.readline()
+        if not raw:
+            continue
+        if echo_raw:
+            print(f"RX: {raw_display(raw)}")
+        record = parse_line(raw)
         if record is None:
             continue
         writer.write_record(record)
@@ -368,9 +436,24 @@ def run_live(args):
     print(f"Connecting to {port} @ {args.baud}")
     try:
         with serial.Serial(port, args.baud, timeout=1) as ser:
-            write_serial(ser, "X")
-            if not wait_for_ready(ser, writer, args.ready_timeout):
-                raise SystemExit("Timed out waiting for READY after reset.")
+            ser.reset_input_buffer()
+            ready = False
+            for attempt in range(1, args.reset_retries + 1):
+                if attempt == 1 and wait_for_ready(ser, writer, args.pre_reset_listen,
+                                                   args.verbose_raw):
+                    ready = True
+                    break
+                print(f"Sending X reset attempt {attempt}/{args.reset_retries}")
+                write_serial(ser, "X")
+                if wait_for_ready(ser, writer, args.ready_timeout, args.verbose_raw):
+                    ready = True
+                    break
+            if not ready and not args.force_start:
+                raise SystemExit("Timed out waiting for READY after reset. "
+                                 "Run with --probe to inspect raw UART bytes, or "
+                                 "--force-start to try H/P/R/G without READY.")
+            if not ready:
+                print("WARNING: proceeding without READY because --force-start was set.")
 
             previous_pattern = None
             for pattern in args.patterns:
@@ -599,8 +682,26 @@ def build_argparser():
     parser.add_argument("--cycles", type=int, default=3, help="Cycles per pattern in live mode.")
     parser.add_argument("--expected-words", type=lambda x: int(x, 0), default=EXPECTED_WORDS)
     parser.add_argument("--ready-timeout", type=float, default=30.0)
+    parser.add_argument("--reset-retries", type=int, default=3)
+    parser.add_argument("--pre-reset-listen", type=float, default=2.0)
     parser.add_argument("--cycle-timeout", type=float, default=CYCLE_TIMEOUT_S)
     parser.add_argument("--diag-after-flip-timeout", type=float, default=DIAG_AFTER_FLIP_TIMEOUT_S)
+    parser.add_argument("--force-start", action="store_true",
+                        help="Try H/P/R/G even if READY is not observed.")
+    parser.add_argument("--verbose-raw", action="store_true",
+                        help="Print raw serial lines while waiting for READY.")
+    parser.add_argument("--probe", action="store_true",
+                        help="Only print raw UART bytes; do not run diagnostics.")
+    parser.add_argument("--probe-seconds", type=float, default=20.0)
+    parser.add_argument("--probe-send-reset", action="store_true",
+                        help="Send X periodically during --probe.")
+    parser.add_argument("--probe-reset-interval", type=float, default=2.0)
+    parser.add_argument("--baud-scan",
+                        default=("115200,230400,460800,500000,921600,1000000,"
+                                 "1020000,1030000,1040000,1041667,1050000,1060000"),
+                        help="Comma-separated baud list used with --scan-baud.")
+    parser.add_argument("--scan-baud", action="store_true",
+                        help="Probe multiple baud rates and print raw UART bytes.")
     return parser
 
 
@@ -610,7 +711,11 @@ def main(argv=None):
         raise SystemExit("--cycles must be >= 1")
     if args.hold < 1:
         raise SystemExit("--hold must be >= 1")
-    if args.replay:
+    if args.scan_baud:
+        baud_scan(args)
+    elif args.probe:
+        probe_serial(args)
+    elif args.replay:
         run_replay(args)
     else:
         run_live(args)
