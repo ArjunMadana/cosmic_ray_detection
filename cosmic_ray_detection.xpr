@@ -161,6 +161,7 @@
       <Filter Type="Srcs"/>
       <File Path="$PSRCDIR/sim_1/new/detector_fsm_tb.v">
         <FileInfo>
+          <Attr Name="AutoDisabled" Val="1"/>
           <Attr Name="UsedIn" Val="simulation"/>
         </FileInfo>
       </File>

@@ -27,6 +27,20 @@ python tools/uart_logger.py
 
 Connect to the board COM port. The board sends `READY` after DDR3 calibration. Select hold, pattern, and refresh in the GUI, then click Start. The GUI sends `H`, `P`, `R`, then `G`; the firmware does not use physical switches or buttons for experiment control.
 
+If persistent flashing fails, check `flash_board.log`. The message `Failure to set flash parameters` occurs after MCS generation and points to the SPI flash programmer setup, not the bitstream build.
+
+For automated first-read diagnostics without the GUI:
+
+```bash
+python -B tools/run_diagnostics.py --port auto --hold 1 --refresh NORM --patterns FF,00,55,AA,FF --cycles 3
+```
+
+To classify an existing capture:
+
+```bash
+python -B tools/run_diagnostics.py --replay data/experiment_20260424_104838.jsonl
+```
+
 ## Control Model
 
 Experiment control is UART-only:
@@ -88,7 +102,7 @@ save_project
 Parser tests:
 
 ```bash
-python -B -m unittest tools.test_uart_logger_parser
+python -B -m unittest tools.test_uart_logger_parser tools.test_run_diagnostics
 ```
 
 The HDL testbench is at `cosmic_ray_detection.srcs/sim_1/new/detector_fsm_tb.v`. It uses a small AXI memory model to check full FILL/FILL2/SCAN coverage, randomized ready/valid stalls, and pattern changes during scans.

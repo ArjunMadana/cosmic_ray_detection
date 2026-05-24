@@ -48,6 +48,7 @@ xsim.dir/
 __pycache__/
 *.pyc
 *.pyc.*
+data/diagnostics/
 
 ### project synth
 */*.runs/synth*/*.xml

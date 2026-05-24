@@ -52,6 +52,20 @@ Fields:
 
 The GUI stores all records in JSONL and marks FLIP rows with `addr_overflow` when the address capture buffer overflowed.
 
+`tools/run_diagnostics.py` can automate the investigation without using the GUI:
+
+```bash
+python -B tools/run_diagnostics.py --port auto --hold 1 --refresh NORM --patterns FF,00,55,AA,FF --cycles 3
+```
+
+It resets with `X`, waits for `READY`, sends `H`, `P`, `R`, and `G`, then writes raw JSONL plus CSV/Markdown summaries under `data/diagnostics`. Replay mode classifies existing captures:
+
+```bash
+python -B tools/run_diagnostics.py --replay data/experiment_20260424_104838.jsonl
+```
+
+The 2026-04-24 capture predates `DIAG`, so it can show the first-read spike but is classified as `NO_DIAG` for root-cause localization.
+
 ## Generated Vivado Patch
 
 The generated BD files do not naturally expose MIG `device_temp` or route the custom refresh tick. The pre-synthesis hook patches:
@@ -68,11 +82,18 @@ The generated BD files do not naturally expose MIG `device_temp` or route the cu
 
 The final patched behavior is `rank_common.refresh_tick = ext_refresh_tick`.
 
+## Flashing Notes
+
+`tools/flash_board.tcl` generates `cosmic_top.mcs` from the current implementation bitstream, creates the Arty S7 SPI cfgmem object, binds it to the FPGA device with `PROGRAM.HW_CFGMEM`, loads Vivado's temporary flash programmer bitstream when required, and then runs `program_hw_cfgmem`.
+
+If `flash_board.log` reports `Flash Programming Unsuccessful: Failure to set flash parameters`, retry with the updated script. The bitstream-to-MCS step can still succeed even when the later SPI programmer setup fails.
+
 ## Verification Status
 
 Completed locally:
 
 - Python parser/storage tests pass with `python -B -m unittest tools.test_uart_logger_parser`.
+- Diagnostic runner tests pass with `python -B -m unittest tools.test_run_diagnostics`.
 - Python syntax check passes with bytecode disabled.
 - `xvlog` compiled `detector_fsm.v` and `detector_fsm_tb.v`.
 - `xsim detector_fsm_tb_sim -runall` passed and printed `detector_fsm_tb PASS`.

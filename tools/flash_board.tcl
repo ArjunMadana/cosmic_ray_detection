@@ -66,6 +66,7 @@ if {[llength $flash_parts] == 0} {
 }
 
 set flash [create_hw_cfgmem -hw_device $device [lindex $flash_parts 0]]
+set_property PROGRAM.HW_CFGMEM $flash $device
 
 set_property PROGRAM.ADDRESS_RANGE          {use_file}       $flash
 set_property PROGRAM.FILES                  [list $mcsfile]  $flash
@@ -77,7 +78,16 @@ set_property PROGRAM.CFG_PROGRAM            1                $flash
 set_property PROGRAM.VERIFY                 1                $flash
 set_property PROGRAM.CHECKSUM               0                $flash
 
-program_hw_cfgmem $flash
+startgroup
+if {![string equal [get_property PROGRAM.HW_CFGMEM_TYPE $device] [get_property MEM_TYPE $flash]]} {
+    puts "Loading temporary flash programmer bitstream..."
+    create_hw_bitstream -hw_device $device [get_property PROGRAM.HW_CFGMEM_BITFILE $device]
+    program_hw_devices $device
+    refresh_hw_device $device
+}
+
+program_hw_cfgmem -hw_cfgmem $flash
+endgroup
 
 puts ""
 puts "Flash programming complete."
