@@ -44,14 +44,19 @@ REFRESH_RE   = re.compile(r'REFRESH:(OFF|SLOW|NORM|FAST)')
 INTV_RE      = re.compile(r'INTERVAL:(\d+)s')
 PATTERN_RE   = re.compile(r'PATTERN:(FF|00|55|AA)')
 READY_RE     = re.compile(r'^READY$')
-ADDRS_HDR_RE = re.compile(r'^ADDRS:([0-9A-Fa-f]{4})$')
+ADDRS_HDR_RE = re.compile(r'^ADDRS:([0-9A-Fa-f]{4})(?:\s+OVF:([01]))?$')
 ADDR_LINE_RE = re.compile(r'^([0-9A-Fa-f]{7})$')
+DIAG_RE      = re.compile(
+    r'DIAG:F1:([0-9A-Fa-f]{8}) F2:([0-9A-Fa-f]{8}) SC:([0-9A-Fa-f]{8}) '
+    r'BERR:([0-9A-Fa-f]{8}) RERR:([0-9A-Fa-f]{8}) BAD:([0-9A-Fa-fX]{7}) '
+    r'GOT:([0-9A-Fa-fX]{8}) EXP:([0-9A-Fa-fX]{8}) OVF:([01])')
 
 HOLD_COLORS = {5: '#4CAF50', 10: '#2196F3', 20: '#FF9800', 30: '#F44736'}
 REFRESH_LABEL = {'OFF': 'Refresh OFF', 'SLOW': 'Slow (~100ms)',
                  'NORM': 'Normal (~7.8µs)', 'FAST': 'Fast (~3.9µs)'}
 PATTERN_LABEL = {'FF': '0xFFFFFFFF', '00': '0x00000000',
                  '55': '0x55555555', 'AA': '0xAAAAAAAA'}
+REFRESH_TO_CMD = {'OFF': '0', 'SLOW': '1', 'NORM': '2', 'FAST': '3'}
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -141,13 +146,29 @@ def parse_line(raw_bytes, ts_unix):
     m = ADDRS_HDR_RE.match(line)
     if m:
         return {'type': 'ADDRS_HDR', 'timestamp': ts, 'ts_unix': ts_unix,
-                'count': int(m.group(1), 16), 'raw': line}
+                'count': int(m.group(1), 16),
+                'addr_overflow': m.group(2) == '1', 'raw': line}
     m = TEMP_RE.search(line)
     if m:
         raw_code = int(m.group(1), 16)
         temp_c = raw_code * 503.975 / 4096 - 273.15
         return {'type': 'TEMP', 'timestamp': ts, 'ts_unix': ts_unix,
                 'raw_code': raw_code, 'temp_c': round(temp_c, 1), 'raw': line}
+    m = DIAG_RE.search(line)
+    if m:
+        def hex_or_none(value):
+            return None if 'X' in value.upper() else int(value, 16)
+        return {'type': 'DIAG', 'timestamp': ts, 'ts_unix': ts_unix,
+                'fill1_count': int(m.group(1), 16),
+                'fill2_count': int(m.group(2), 16),
+                'scan_count': int(m.group(3), 16),
+                'bresp_errors': int(m.group(4), 16),
+                'rresp_errors': int(m.group(5), 16),
+                'first_bad_addr': hex_or_none(m.group(6)),
+                'first_bad_got': hex_or_none(m.group(7)),
+                'first_bad_exp': hex_or_none(m.group(8)),
+                'addr_overflow': m.group(9) == '1',
+                'raw': line}
     return None
 
 # ---------------------------------------------------------------------------
@@ -155,7 +176,8 @@ def parse_line(raw_bytes, ts_unix):
 # ---------------------------------------------------------------------------
 
 class DataStore:
-    CSV_FIELDS = ['timestamp', 'iteration', 'hold_s', 'refresh_rate', 'pattern', 'flip_count', 'temp_c', 'experiment']
+    CSV_FIELDS = ['timestamp', 'iteration', 'hold_s', 'refresh_rate', 'pattern',
+                  'flip_count', 'addr_overflow', 'temp_c', 'experiment']
 
     def __init__(self, output_dir, name, description, start_time_iso):
         self.name = name
@@ -204,6 +226,7 @@ class DataStore:
                 'refresh_rate': self.refresh_rate,
                 'pattern':      record.get('pattern', self.pattern),
                 'flip_count':   record['flip_count'],
+                'addr_overflow': record.get('addr_overflow', False),
                 'temp_c':       self.temp_c,
                 'experiment':   self.name,
             }
@@ -613,6 +636,7 @@ class DosimeterApp:
         self._running        = False  # True after Start clicked and G sent
         self._addr_remaining = 0      # address lines still expected from ADDRS header
         self._addr_buf       = []     # addresses collected for current cycle
+        self._addr_overflow  = False
         self._bg             = BackgroundModel()
         self._rare_records   = []     # (iteration, rare_count, clusters) for de-noised plot
         self._raster_records = []     # (iteration, hot_addrs, rare_addrs) for raster
@@ -753,6 +777,15 @@ class DosimeterApp:
         pat_cb.pack(side='left', padx=(2, 0))
         ttk.Button(ctrl, text='Send', command=self._send_pattern).pack(side='left', padx=(2, 14))
 
+        # Refresh selector
+        ttk.Separator(ctrl, orient='vertical').pack(side='left', fill='y', padx=6)
+        ttk.Label(ctrl, text='Refresh:').pack(side='left')
+        self._refresh_var = tk.StringVar(value='OFF')
+        ref_cb = ttk.Combobox(ctrl, textvariable=self._refresh_var, width=5, state='readonly',
+                              values=['OFF', 'SLOW', 'NORM', 'FAST'])
+        ref_cb.pack(side='left', padx=(2, 0))
+        ttk.Button(ctrl, text='Send', command=self._send_refresh).pack(side='left', padx=(2, 14))
+
         # Alert threshold
         ttk.Label(ctrl, text='Alert if flips >').pack(side='left')
         self._alert_var = tk.StringVar()
@@ -881,7 +914,7 @@ class DosimeterApp:
         self._conn_btn.config( state='disabled')
         self._disc_btn.config( state='normal')
         self._start_btn.config(state='disabled')
-        self._reset_btn.config(state='disabled')
+        self._reset_btn.config(state='normal')
         self._log_append(f'Connected to {self._port_var.get()} — waiting for board READY…', 'status')
 
     def _start(self):
@@ -910,6 +943,8 @@ class DosimeterApp:
         pat_idx = {'0xFFFFFFFF': '0', '0x00000000': '1',
                    '0x55555555': '2', '0xAAAAAAAA': '3'}.get(pat_val, '0')
         self._reader.write(f'P{pat_idx}\n'.encode('ascii'))
+        ref_idx = REFRESH_TO_CMD.get(self._refresh_var.get(), '0')
+        self._reader.write(f'R{ref_idx}\n'.encode('ascii'))
         self._reader.write(b'G')
 
         self._running = True
@@ -931,7 +966,7 @@ class DosimeterApp:
         self._running     = False
         self._board_ready = False
         self._start_btn.config(state='disabled')
-        self._reset_btn.config(state='disabled')
+        self._reset_btn.config(state='normal' if self._connected else 'disabled')
         self._log_append('Waiting for READY…', 'status')
 
     def _open_sweep(self):
@@ -1003,12 +1038,14 @@ class DosimeterApp:
         if record['type'] == 'READY':
             self._board_ready = True
             self._start_btn.config(state='normal')
-            self._log_append('── Board READY — configure settings and click ▶ Start', 'status')
+            self._reset_btn.config(state='normal' if self._connected else 'disabled')
+            self._log_append('Board READY - configure settings and click Start', 'status')
             return
 
         elif record['type'] == 'ADDRS_HDR':
             self._addr_remaining = record['count']
             self._addr_buf       = []
+            self._addr_overflow  = record.get('addr_overflow', False)
             return
 
         elif record['type'] == 'REFRESH':
@@ -1029,11 +1066,22 @@ class DosimeterApp:
             self._log_append(f"Hold interval → {record['hold_s']} s", 'interval')
             self._hang.update_hold(record['hold_s'])
 
+        elif record['type'] == 'DIAG':
+            bad = record.get('first_bad_addr')
+            bad_s = 'none' if bad is None else f'0x{bad:07X}'
+            self._log_append(
+                f"[DIAG] F1={record['fill1_count']:,} F2={record['fill2_count']:,} "
+                f"SC={record['scan_count']:,} BERR={record['bresp_errors']:,} "
+                f"RERR={record['rresp_errors']:,} BAD={bad_s} "
+                f"OVF={int(record.get('addr_overflow', False))}", 'status')
+
         elif record['type'] == 'FLIP':
             self._hang.reset(record['hold_s'])
             record['addrs'] = list(self._addr_buf)
+            record['addr_overflow'] = self._addr_overflow
             self._addr_buf       = []
             self._addr_remaining = 0
+            self._addr_overflow  = False
             addrs = record['addrs']
             self._bg.update(addrs)
             hot, rare = self._bg.classify(addrs)
@@ -1074,11 +1122,16 @@ class DosimeterApp:
             is_alert = self._alert is not None and fc > self._alert
             tag = 'alert' if is_alert else 'flip'
             n_addrs = len(record.get('addrs', []))
+            ovf_str = "  ADDR_OVF" if record.get('addr_overflow') else ""
             temp_str = f"  temp={self._store.temp_c}°C" if self._store.temp_c is not None else ""
             self._log_append(
                 f"[{record['timestamp'][11:19]}] #{self._store.iteration:>4}  "
                 f"flips={fc:>10,}  addrs={n_addrs:>5}  hold={record['hold_s']}s  "
-                f"refresh={self._store.refresh_rate}{temp_str}", tag)
+                f"refresh={self._store.refresh_rate}{temp_str}{ovf_str}", tag)
+            if fc != n_addrs:
+                self._log_append(
+                    f"  address count mismatch: flip_count={fc:,}, captured={n_addrs:,}",
+                    'alert' if record.get('addr_overflow') else 'status')
             if is_alert:
                 self._log_append(f'  ⚠ {fc:,} exceeds alert threshold {self._alert:,}', 'alert')
 
@@ -1291,6 +1344,20 @@ class DosimeterApp:
         else:
             self._log_append('⚠ Not connected', 'alert')
 
+    def _send_refresh(self):
+        val = self._refresh_var.get()
+        idx = REFRESH_TO_CMD.get(val)
+        if idx is None:
+            return
+        if self._reader:
+            cmd = f'R{idx}\n'.encode('ascii')
+            if self._reader.write(cmd):
+                self._log_append(f'Sent refresh = {val} to board', 'refresh')
+            else:
+                self._log_append('Not connected - command not sent', 'alert')
+        else:
+            self._log_append('Not connected', 'alert')
+
     def _set_alert(self):
         val = self._alert_var.get().strip()
         if not val:
@@ -1337,6 +1404,10 @@ class DosimeterApp:
             start_time_iso=datetime.now(tz=timezone.utc).isoformat())
         self._ref_events.clear()
         self._pat_events.clear()
+        self._rare_records.clear()
+        self._raster_records.clear()
+        self._temp_records.clear()
+        self._bg = BackgroundModel()
         self._log_append(f'Replaying {path}', 'status')
 
         try:
@@ -1364,6 +1435,18 @@ class DosimeterApp:
                         label = PATTERN_LABEL.get(record.get('pattern', ''), '')
                         self._pat_events.append((record['ts_unix'], label))
                         self._store.ingest(record)
+                    elif record.get('type') == 'TEMP':
+                        self._temp_records.append((record['ts_unix'], record.get('temp_c')))
+                        self._store.ingest(record)
+                    elif record.get('type') == 'FLIP':
+                        addrs = record.get('addrs', [])
+                        self._bg.update(addrs)
+                        hot, rare = self._bg.classify(addrs)
+                        clusters = self._bg.find_clusters(rare)
+                        iteration = self._store.iteration + 1
+                        self._rare_records.append((iteration, len(rare), clusters))
+                        self._raster_records.append((iteration, hot, rare))
+                        self._store.ingest(record)
                     else:
                         self._store.ingest(record)
 
@@ -1373,6 +1456,10 @@ class DosimeterApp:
 
         self._log_append(f'Replay complete.\n{self._store.summary()}', 'status')
         self._redraw()
+        if self._rare_records:
+            self._redraw_denoised()
+        if self._raster_records:
+            self._redraw_raster()
         self._conn_btn.config(state='disabled')
 
     # -----------------------------------------------------------------------

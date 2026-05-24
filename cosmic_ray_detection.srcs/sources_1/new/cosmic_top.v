@@ -22,8 +22,6 @@
     module cosmic_top (
         input  wire        sys_clock,
 //        input  wire        reset,
-        input  wire        sw0,
-        input  wire        sw1,
 
         // DDR3
         inout  wire [15:0] ddr3_dq,
@@ -42,12 +40,6 @@
         output wire [1:0]  ddr3_dm,
         output wire        ddr3_odt,
         
-        // Buttons
-        input wire btn0,
-        input wire btn1,
-        input wire btn2,
-        input wire btn3,
-            
         // UART
         output wire        uart_txd,
         input  wire        uart_rxd,
@@ -59,9 +51,9 @@
     
     // Internal wires
     wire        ui_clk;
-    wire        ui_rst;
     wire        calib_complete;
     wire [11:0] device_temp;
+    wire        refresh_tick_out;
     
     // AXI wires
     wire [27:0] awaddr;
@@ -90,12 +82,12 @@
     wire        rx_valid;
     
     wire reset;
-    assign reset = 1'b0;  // never assert reset, use red button instead
+    assign reset = 1'b0;
 
     wire        fsm_rst;
     assign fsm_rst = !calib_complete;
 
-    wire        refresh_tick_out;
+    localparam UI_CLK_HZ = 166_666_667;
     
     // Block design instance
     cosmic_bd_wrapper u_bd (
@@ -143,7 +135,8 @@
         .S00_AXI_0_arsize   (3'b010),
         .S00_AXI_0_wlast    (1'b1),
         .reset_0            (~reset),
-        .device_temp_0      (device_temp)
+        .device_temp_0      (device_temp),
+        .ext_refresh_tick   (refresh_tick_out)
     );
     
     // FSM
@@ -151,8 +144,6 @@
         .clk            (ui_clk),
         .rst            (fsm_rst),
         .calib_complete (calib_complete),
-        .sw0            (sw0),
-        .sw1            (sw1),
         .refresh_tick_out (refresh_tick_out),
         .awaddr         (awaddr),
         .awvalid        (awvalid),
@@ -177,16 +168,15 @@
         .rx_data        (rx_data),
         .rx_valid       (rx_valid),
         .led0           (led0),
-        .btn0           (btn0),
-        .btn1           (btn1),
-        .btn2           (btn2),
-        .btn3           (btn3),
         .led1           (led1),
         .temp_raw       (device_temp)
     );
     
     // UART TX
-    uart_tx u_uart_tx (
+    uart_tx #(
+        .CLK_FREQ  (UI_CLK_HZ),
+        .BAUD_RATE (921_600)
+    ) u_uart_tx (
         .clk   (ui_clk),
         .rst   (fsm_rst),
         .data  (uart_data),
@@ -197,7 +187,7 @@
 
     // UART RX — receives hold-time commands from laptop
     uart_rx #(
-        .CLK_FREQ  (150_000_000),
+        .CLK_FREQ  (UI_CLK_HZ),
         .BAUD_RATE (921_600)
     ) u_uart_rx (
         .clk   (ui_clk),

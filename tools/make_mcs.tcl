@@ -1,12 +1,10 @@
-# make_mcs.tcl — Converts bitstream to .mcs for SPI flash programming.
+# make_mcs.tcl - Converts bitstream to .mcs for SPI flash programming.
 #
 # Usage (from the project root):
 #   vivado -mode batch -source tools/make_mcs.tcl
 #
-# After this, use the Vivado Hardware Manager GUI to program the flash:
-#   Right-click xc7s25 > Add Configuration Memory Device
-#   Part: s25fl128sxxxxxx0-spi-x1_x2_x4
-#   MCS:  cosmic_ray_detection.runs/impl_1/cosmic_top.mcs
+# This only creates the image. To generate and program flash in one batch run,
+# use tools/flash_board.tcl or flash_board.bat.
 
 set bitfile [file normalize "cosmic_ray_detection.runs/impl_1/cosmic_top.bit"]
 set mcsfile [file normalize "cosmic_ray_detection.runs/impl_1/cosmic_top.mcs"]
@@ -25,4 +23,4 @@ write_cfgmem -format mcs -size 16 -interface SPIx4 \
 
 puts ""
 puts "MCS written to: $mcsfile"
-puts "Now program via Hardware Manager GUI (see flash_board.bat for steps)."
+puts "To program flash in batch mode, run: vivado -mode batch -source tools/flash_board.tcl"

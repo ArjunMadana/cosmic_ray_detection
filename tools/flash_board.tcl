@@ -1,17 +1,26 @@
-# flash_board.tcl — Writes bitstream to onboard SPI flash (W25Q128JV) on Arty S7-25.
+# flash_board.tcl - Writes bitstream to onboard SPI flash on the Arty S7-25.
 #
-# Usage (Vivado TCL console, project open):
-#   source {c:/_CAMSIN/cosmic_ray_detection/tools/flash_board.tcl}
-#
-# Usage (batch mode, from project root):
+# Usage (from the project root):
 #   vivado -mode batch -source tools/flash_board.tcl
 #
-# After flashing, power-cycle the board.  It will auto-load the bitstream
-# from flash on every subsequent power-up without needing JTAG.
+# After flashing, power-cycle the board. It will auto-load the bitstream from
+# flash on subsequent power-ups.
 
-# ---------------------------------------------------------------------------
-# Locate files using the project directory (works regardless of Vivado's CWD)
-# ---------------------------------------------------------------------------
+proc ensure_project_open {} {
+    if {[catch {current_project}]} {
+        set xpr [file normalize "cosmic_ray_detection.xpr"]
+        if {![file exists $xpr]} {
+            puts "ERROR: No project is open and cosmic_ray_detection.xpr was not found."
+            puts "Run this script from the project root, or open the project first."
+            return -code error
+        }
+        open_project $xpr
+    }
+}
+
+if {[catch {ensure_project_open}]} {
+    return
+}
 
 set proj_dir [get_property DIRECTORY [current_project]]
 set bitfile  [file normalize "$proj_dir/cosmic_ray_detection.runs/impl_1/cosmic_top.bit"]
@@ -25,13 +34,13 @@ if {![file exists $bitfile]} {
 
 puts "Generating .mcs from: $bitfile"
 
-# W25Q128JV is 128 Mb = 16 MB, quad SPI
+# W25Q128JV-compatible 128 Mb = 16 MB quad-SPI configuration image.
 write_cfgmem -format mcs -size 16 -interface SPIx4 \
     -loadbit "up 0x0 $bitfile" \
     -file $mcsfile -force
 
 puts "Programming SPI flash with: $mcsfile"
-puts "(This takes ~2 minutes — do not unplug the board)"
+puts "This takes about 2 minutes. Do not unplug the board."
 
 open_hw_manager
 connect_hw_server -allow_non_jtag
@@ -73,7 +82,7 @@ program_hw_cfgmem $flash
 puts ""
 puts "Flash programming complete."
 puts "Power-cycle the board to boot from flash."
-puts "The board will send READY over UART once MIG calibration completes (~5 seconds)."
+puts "The board will send READY over UART once MIG calibration completes."
 
 close_hw_target
 disconnect_hw_server

@@ -1,37 +1,25 @@
-# expose_device_temp.tcl
+# generated_bd_patch.tcl
 #
-# Exposes the MIG XADC die temperature through the Vivado-generated BD wrapper:
-#   device_temp_0  [11:0]  output  — on-chip die temperature from MIG XADC
+# Vivado pre-synthesis hook for generated files under cosmic_bd.
 #
-# The MIG IP does not expose device_temp in its BD interface definition, so
-# this script edits the two generated Verilog files directly after each
-# generate_target call.  It is registered as a pre-synthesis hook in synth_1
-# so it runs automatically — you do not need to call it manually.
+# Patches generated Verilog after block-design generation so the top-level
+# design can use two MIG-internal signals that are not exposed by the BD:
+#   device_temp_0[11:0]  - MIG XADC die temperature output
+#   ext_refresh_tick     - GUI/UART-controlled refresh tick into MIG rank_common
 #
-# If you need to run it manually (Vivado TCL console, project open):
-#   source {c:/_CAMSIN/cosmic_ray_detection/tools/expose_device_temp.tcl}
+# This file keeps the historical name because cosmic_ray_detection.xpr already
+# points its synth_1 pre-hook at tools/expose_device_temp.tcl.
 
-# ---------------------------------------------------------------------------
-# Locate the generated files
-# ---------------------------------------------------------------------------
-
-# Derive project root from the open project — works regardless of Vivado's CWD.
-set proj_dir [get_property DIRECTORY [current_project]]
-set bd_root  [file normalize "$proj_dir/cosmic_ray_detection.gen/sources_1/bd/cosmic_bd"]
-set synth_v  "$bd_root/synth/cosmic_bd.v"
-set wrapper  "$bd_root/hdl/cosmic_bd_wrapper.v"
-
-foreach f [list $synth_v $wrapper] {
-    if {![file exists $f]} {
-        puts "ERROR: File not found: $f"
-        puts "Run 'generate_target all \[get_files cosmic_bd.bd\]' in Vivado first."
-        return
+proc ensure_project_open {} {
+    if {[catch {current_project}]} {
+        set xpr [file normalize "cosmic_ray_detection.xpr"]
+        if {![file exists $xpr]} {
+            puts "ERROR: No project is open and cosmic_ray_detection.xpr was not found."
+            return -code error
+        }
+        open_project $xpr
     }
 }
-
-# ---------------------------------------------------------------------------
-# Helper: read / write file
-# ---------------------------------------------------------------------------
 
 proc read_file {path} {
     set fh [open $path r]
@@ -46,113 +34,183 @@ proc write_file {path content} {
     close $fh
 }
 
-# ---------------------------------------------------------------------------
-# Patch cosmic_bd.v (synthesis netlist)
-# ---------------------------------------------------------------------------
-
-puts "Patching $synth_v ..."
-set txt [read_file $synth_v]
-
-# 1. Add device_temp_0 to the module port list
-if {![string match "*device_temp_0*" $txt]} {
-    regsub {(    init_calib_complete_0,)} $txt \
-        "    device_temp_0,\n\\1" txt
-    puts "  Added device_temp_0 to port list."
-} else {
-    puts "  Port list already patched."
+proc replace_once {var_name old new label} {
+    upvar $var_name txt
+    if {[string first $new $txt] >= 0} {
+        puts "  $label already patched."
+        return
+    }
+    set pos [string first $old $txt]
+    if {$pos < 0} {
+        puts "WARNING: Could not find patch anchor for $label."
+        return
+    }
+    set txt [string replace $txt $pos [expr {$pos + [string length $old] - 1}] $new]
+    puts "  Patched $label."
 }
 
-# 2. Add port direction declaration
-# Use string first (exact substring) — string match glob misparses [11:0] as a char class.
-if {[string first "output \[11:0\]device_temp_0" $txt] < 0} {
-    regsub {(  output init_calib_complete_0;)} $txt \
-        "  output \[11:0\]device_temp_0;\n\\1" txt
-    puts "  Added port declaration."
-} else {
-    puts "  Port declaration already present."
+proc replace_once_if_missing {var_name guard old new label} {
+    upvar $var_name txt
+    if {[string first $guard $txt] >= 0} {
+        puts "  $label already patched."
+        return
+    }
+    replace_once txt $old $new $label
 }
 
-# 3. Add wire for the MIG device_temp signal
-if {![string match "*mig_7series_0_device_temp*" $txt]} {
-    regsub {(  wire mig_7series_0_init_calib_complete;)} $txt \
-        "  wire \[11:0\]mig_7series_0_device_temp;\n\\1" txt
-    puts "  Added wire mig_7series_0_device_temp."
-} else {
-    puts "  Wire already declared."
+proc patch_file {path script_body} {
+    if {![file exists $path]} {
+        puts "ERROR: File not found: $path"
+        return
+    }
+    puts ""
+    puts "Patching $path ..."
+    set txt [read_file $path]
+    eval $script_body
+    write_file $path $txt
 }
 
-# 4. Assign device_temp_0 from the internal wire
-if {![string match "*assign device_temp_0*" $txt]} {
-    regsub {(  assign init_calib_complete_0 = mig_7series_0_init_calib_complete;)} $txt \
-        "  assign device_temp_0 = mig_7series_0_device_temp;\n\\1" txt
-    puts "  Added assign device_temp_0."
-} else {
-    puts "  Assign already present."
+if {[catch {ensure_project_open}]} {
+    return
 }
 
-# 5. Connect .device_temp in the MIG instantiation
-if {![string match "*.device_temp(mig_7series_0_device_temp)*" $txt]} {
-    regsub {(        \.sys_clk_i\(clk_wiz_0_clk_out1\))} $txt \
-        "        .device_temp(mig_7series_0_device_temp),\n\\1" txt
-    puts "  Connected .device_temp in MIG instance."
-} else {
-    puts "  MIG instance already connected."
+set proj_dir [get_property DIRECTORY [current_project]]
+set bd_root  [file normalize "$proj_dir/cosmic_ray_detection.gen/sources_1/bd/cosmic_bd"]
+set synth_v  "$bd_root/synth/cosmic_bd.v"
+set wrapper  "$bd_root/hdl/cosmic_bd_wrapper.v"
+set mig_root "$bd_root/ip/cosmic_bd_mig_7series_0_2/cosmic_bd_mig_7series_0_2/user_design/rtl"
+
+set mig_top     "$mig_root/cosmic_bd_mig_7series_0_2.v"
+set mig_core    "$mig_root/cosmic_bd_mig_7series_0_2_mig.v"
+set memc_top    "$mig_root/ip_top/mig_7series_v4_2_memc_ui_top_axi.v"
+set mem_intfc   "$mig_root/ip_top/mig_7series_v4_2_mem_intfc.v"
+set mc          "$mig_root/controller/mig_7series_v4_2_mc.v"
+set rank_mach   "$mig_root/controller/mig_7series_v4_2_rank_mach.v"
+set rank_common "$mig_root/controller/mig_7series_v4_2_rank_common.v"
+
+patch_file $synth_v {
+    replace_once txt "    init_calib_complete_0," \
+        "    device_temp_0,\n    init_calib_complete_0," \
+        "cosmic_bd device_temp_0 port"
+    replace_once txt "  output init_calib_complete_0;" \
+        "  output [11:0]device_temp_0;\n  output init_calib_complete_0;" \
+        "cosmic_bd device_temp_0 declaration"
+    replace_once txt "  wire mig_7series_0_init_calib_complete;" \
+        "  wire [11:0]mig_7series_0_device_temp;\n  wire mig_7series_0_init_calib_complete;" \
+        "cosmic_bd device_temp wire"
+    replace_once txt "  assign init_calib_complete_0 = mig_7series_0_init_calib_complete;" \
+        "  assign device_temp_0 = mig_7series_0_device_temp;\n  assign init_calib_complete_0 = mig_7series_0_init_calib_complete;" \
+        "cosmic_bd device_temp assign"
+    replace_once txt "        .sys_clk_i(clk_wiz_0_clk_out1)," \
+        "        .device_temp(mig_7series_0_device_temp),\n        .sys_clk_i(clk_wiz_0_clk_out1)," \
+        "cosmic_bd MIG device_temp connection"
+    replace_once txt "    device_temp_0,\n    init_calib_complete_0," \
+        "    device_temp_0,\n    ext_refresh_tick,\n    init_calib_complete_0," \
+        "cosmic_bd ext_refresh_tick port"
+    replace_once txt "  output [11:0]device_temp_0;\n  output init_calib_complete_0;" \
+        "  output [11:0]device_temp_0;\n  input ext_refresh_tick;\n  output init_calib_complete_0;" \
+        "cosmic_bd ext_refresh_tick declaration"
+    replace_once txt "        .device_temp(mig_7series_0_device_temp),\n        .sys_clk_i(clk_wiz_0_clk_out1)," \
+        "        .device_temp(mig_7series_0_device_temp),\n        .ext_refresh_tick(ext_refresh_tick),\n        .sys_clk_i(clk_wiz_0_clk_out1)," \
+        "cosmic_bd MIG ext_refresh_tick connection"
 }
 
-write_file $synth_v $txt
-puts "Wrote $synth_v"
-
-# ---------------------------------------------------------------------------
-# Patch cosmic_bd_wrapper.v
-# ---------------------------------------------------------------------------
-
-puts "\nPatching $wrapper ..."
-set txt [read_file $wrapper]
-
-# 1. Add device_temp_0 to the module port list
-if {![string match "*device_temp_0*" $txt]} {
-    regsub {(    init_calib_complete_0,)} $txt \
-        "    device_temp_0,\n\\1" txt
-    puts "  Added device_temp_0 to port list."
-} else {
-    puts "  Port list already patched."
+patch_file $wrapper {
+    replace_once txt "    init_calib_complete_0," \
+        "    device_temp_0,\n    init_calib_complete_0," \
+        "wrapper device_temp_0 port"
+    replace_once txt "  output init_calib_complete_0;" \
+        "  output [11:0]device_temp_0;\n  output init_calib_complete_0;" \
+        "wrapper device_temp_0 declaration"
+    replace_once_if_missing txt "  wire [11:0]device_temp_0;" "  wire ui_clk_0;" \
+        "  wire ui_clk_0;\n  wire [11:0]device_temp_0;" \
+        "wrapper device_temp wire"
+    replace_once txt "        .init_calib_complete_0(init_calib_complete_0)," \
+        "        .device_temp_0(device_temp_0),\n        .init_calib_complete_0(init_calib_complete_0)," \
+        "wrapper cosmic_bd device_temp connection"
+    replace_once txt "    device_temp_0,\n    init_calib_complete_0," \
+        "    device_temp_0,\n    ext_refresh_tick,\n    init_calib_complete_0," \
+        "wrapper ext_refresh_tick port"
+    replace_once txt "  output [11:0]device_temp_0;\n  output init_calib_complete_0;" \
+        "  output [11:0]device_temp_0;\n  input ext_refresh_tick;\n  output init_calib_complete_0;" \
+        "wrapper ext_refresh_tick declaration"
+    replace_once_if_missing txt "  wire ext_refresh_tick;" "  wire ui_clk_0;" \
+        "  wire ui_clk_0;\n  wire ext_refresh_tick;" \
+        "wrapper ext_refresh_tick wire"
+    replace_once txt "        .device_temp_0(device_temp_0),\n        .init_calib_complete_0(init_calib_complete_0)," \
+        "        .device_temp_0(device_temp_0),\n        .ext_refresh_tick(ext_refresh_tick),\n        .init_calib_complete_0(init_calib_complete_0)," \
+        "wrapper cosmic_bd ext_refresh_tick connection"
 }
 
-# 2. Add port direction declaration
-if {[string first "output \[11:0\]device_temp_0" $txt] < 0} {
-    regsub {(  output init_calib_complete_0;)} $txt \
-        "  output \[11:0\]device_temp_0;\n\\1" txt
-    puts "  Added port declaration."
-} else {
-    puts "  Port declaration already present."
+patch_file $mig_top {
+    replace_once txt "  input         sys_clk_i,\n  // Single-ended iodelayctrl clk" \
+        "  input         sys_clk_i,\n  input         ext_refresh_tick,\n  // Single-ended iodelayctrl clk" \
+        "MIG top ext_refresh_tick input"
+    replace_once txt "    .ui_clk                         (ui_clk)," \
+        "    .ext_refresh_tick               (ext_refresh_tick),\n    .ui_clk                         (ui_clk)," \
+        "MIG top core ext_refresh_tick connection"
 }
 
-# 3. Add wire declaration
-if {[string first "wire \[11:0\]device_temp_0" $txt] < 0} {
-    regsub {(  wire ui_clk_0;)} $txt \
-        "\\1\n  wire \[11:0\]device_temp_0;" txt
-    puts "  Added wire declaration."
-} else {
-    puts "  Wire already declared."
+patch_file $mig_core {
+    replace_once txt "   input                                        sys_clk_i," \
+        "   input                                        sys_clk_i,\n   input                                        ext_refresh_tick," \
+        "MIG core ext_refresh_tick input"
+    replace_once txt "       .clk                              (clk)," \
+        "       .ext_refresh_tick                 (ext_refresh_tick),\n       .clk                              (clk)," \
+        "MIG core memc ext_refresh_tick connection"
 }
 
-# 4. Connect .device_temp_0 in the cosmic_bd instantiation
-if {![string match "*.device_temp_0(device_temp_0)*" $txt]} {
-    regsub {(        \.init_calib_complete_0\(init_calib_complete_0\))} $txt \
-        "        .device_temp_0(device_temp_0),\n\\1" txt
-    puts "  Connected .device_temp_0 in cosmic_bd instance."
-} else {
-    puts "  cosmic_bd instance already connected."
+patch_file $memc_top {
+    replace_once txt "   input                              clk,\n   input                              clk_div2," \
+        "   input                              clk,\n   input                              ext_refresh_tick,\n   input                              clk_div2," \
+        "memc ext_refresh_tick input"
+    replace_once txt "      .clk                              (clk)," \
+        "      .ext_refresh_tick                 (ext_refresh_tick),\n      .clk                              (clk)," \
+        "memc mem_intfc ext_refresh_tick connection"
 }
 
-write_file $wrapper $txt
-puts "Wrote $wrapper"
+patch_file $mem_intfc {
+    replace_once txt "   input                  clk ,\n   input                  clk_div2," \
+        "   input                  clk ,\n   input                  ext_refresh_tick,\n   input                  clk_div2," \
+        "mem_intfc ext_refresh_tick input"
+    replace_once txt "      .clk                    (clk)," \
+        "      .ext_refresh_tick       (ext_refresh_tick),\n      .clk                    (clk)," \
+        "mem_intfc mc ext_refresh_tick connection"
+}
 
-# ---------------------------------------------------------------------------
-# Done
-# ---------------------------------------------------------------------------
+patch_file $mc {
+    replace_once txt "    input                                     clk,\n    input                                     rst," \
+        "    input                                     clk,\n    input                                     rst,\n    input                                     ext_refresh_tick," \
+        "mc ext_refresh_tick input"
+    replace_once txt "        .clk                  (clk)," \
+        "        .ext_refresh_tick     (ext_refresh_tick),\n        .clk                  (clk)," \
+        "mc rank_mach ext_refresh_tick connection"
+}
+
+patch_file $rank_mach {
+    replace_once txt "  app_sr_req, app_ref_req, app_periodic_rd_req, act_this_rank_r" \
+        "  app_sr_req, app_ref_req, app_periodic_rd_req, act_this_rank_r,\n  ext_refresh_tick" \
+        "rank_mach AUTOARG ext_refresh_tick"
+    replace_once txt "  input                 clk;" \
+        "  input                 clk;\n  input                 ext_refresh_tick;" \
+        "rank_mach ext_refresh_tick input"
+    replace_once txt "     .maint_prescaler_tick_r            (maint_prescaler_tick_r)," \
+        "     .ext_refresh_tick                 (ext_refresh_tick),\n     .maint_prescaler_tick_r            (maint_prescaler_tick_r)," \
+        "rank_mach rank_common ext_refresh_tick connection"
+}
+
+patch_file $rank_common {
+    replace_once txt "  periodic_rd_request, periodic_rd_ack_r" \
+        "  periodic_rd_request, periodic_rd_ack_r, ext_refresh_tick" \
+        "rank_common AUTOARG ext_refresh_tick"
+    replace_once txt "  input rst;" \
+        "  input rst;\n  input ext_refresh_tick;" \
+        "rank_common ext_refresh_tick input"
+    replace_once txt "  assign refresh_tick = refresh_tick_lcl;" \
+        "  assign refresh_tick = ext_refresh_tick;" \
+        "rank_common external refresh source"
+}
 
 puts ""
-puts "Done. cosmic_bd_wrapper.v now exposes: device_temp_0\[11:0\]"
-puts "NOTE: This script re-runs automatically before each synthesis via the"
-puts "      STEPS.SYNTH_DESIGN.TCL.PRE hook registered in synth_1."
+puts "Done. Generated BD exposes device_temp_0[11:0] and ext_refresh_tick."
+puts "The ext_refresh_tick signal now drives MIG rank_common refresh_tick."

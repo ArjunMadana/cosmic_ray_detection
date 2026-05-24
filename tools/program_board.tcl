@@ -1,9 +1,23 @@
-# program_board.tcl — Programs the Arty S7-25 via JTAG without opening the Vivado GUI.
+# program_board.tcl - Programs the Arty S7-25 via JTAG without opening the Vivado GUI.
 #
 # Usage (from the project root):
 #   vivado -mode batch -source tools/program_board.tcl
-#
-# Or add a shortcut / batch file that runs that command.
+
+proc ensure_project_open {} {
+    if {[catch {current_project}]} {
+        set xpr [file normalize "cosmic_ray_detection.xpr"]
+        if {![file exists $xpr]} {
+            puts "ERROR: No project is open and cosmic_ray_detection.xpr was not found."
+            puts "Run this script from the project root, or open the project first."
+            return -code error
+        }
+        open_project $xpr
+    }
+}
+
+if {[catch {ensure_project_open}]} {
+    return
+}
 
 set proj_dir [get_property DIRECTORY [current_project]]
 set bitfile  [file normalize "$proj_dir/cosmic_ray_detection.runs/impl_1/cosmic_top.bit"]
