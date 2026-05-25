@@ -224,6 +224,15 @@ class DataStore:
         self._csv_file   = open(self.csv_path,   'a', newline='', buffering=1)
         self._csv_writer = csv.DictWriter(self._csv_file, fieldnames=self.CSV_FIELDS)
         self._jsonl_file = open(self.jsonl_path, 'a', buffering=1)
+        self._pending_csv_row = None
+
+    def _flush_pending_csv_row(self):
+        if self._pending_csv_row is None:
+            return
+        self._csv_writer.writerow({
+            k: v for k, v in self._pending_csv_row.items() if k in self.CSV_FIELDS
+        })
+        self._pending_csv_row = None
 
     def ingest(self, record):
         self._jsonl_file.write(json.dumps(record) + '\n')
@@ -235,8 +244,12 @@ class DataStore:
             return False
         if record['type'] == 'TEMP':
             self.temp_c = record['temp_c']
+            if self._pending_csv_row is not None:
+                self._pending_csv_row['temp_c'] = self.temp_c
+                self._flush_pending_csv_row()
             return False
         if record['type'] == 'FLIP':
+            self._flush_pending_csv_row()
             self.iteration += 1
             row = {
                 'timestamp':    record['timestamp'],
@@ -247,11 +260,11 @@ class DataStore:
                 'pattern':      record.get('pattern', self.pattern),
                 'flip_count':   record['flip_count'],
                 'addr_overflow': record.get('addr_overflow', False),
-                'temp_c':       self.temp_c,
+                'temp_c':       record.get('temp_c', self.temp_c),
                 'experiment':   self.name,
             }
-            self._csv_writer.writerow({k: v for k, v in row.items() if k in self.CSV_FIELDS})
             self.records.append(row)
+            self._pending_csv_row = row
             return True
         return False
 
@@ -264,6 +277,7 @@ class DataStore:
         return record
 
     def close(self):
+        self._flush_pending_csv_row()
         self._csv_file.close()
         self._jsonl_file.close()
 
@@ -660,6 +674,7 @@ class DosimeterApp:
         self._bg             = BackgroundModel()
         self._rare_records   = []     # (iteration, rare_count, clusters) for de-noised plot
         self._raster_records = []     # (iteration, hot_addrs, rare_addrs) for raster
+        self._last_plot_error = None
 
         self._build_ui()
 
@@ -891,6 +906,11 @@ class DosimeterApp:
         w.see('end')
         w.config(state='disabled')
 
+    def _clear_address_capture(self):
+        self._addr_remaining = 0
+        self._addr_buf = []
+        self._addr_overflow = False
+
     def _draw_empty_plot(self):
         self._ax.clear()
         self._ax_temp.clear()
@@ -954,6 +974,10 @@ class DosimeterApp:
         self._temp_records.clear()
         self._bg   = BackgroundModel()
         self._hang = HangDetector()
+        self._clear_address_capture()
+        self._draw_empty_plot()
+        self._draw_empty_denoised()
+        self._draw_empty_raster()
 
         # Send initial conditions before Go so first cycle uses GUI values
         hold_val = self._hold_var.get().strip()
@@ -985,6 +1009,7 @@ class DosimeterApp:
             self._store = None
         self._running     = False
         self._board_ready = False
+        self._clear_address_capture()
         self._start_btn.config(state='disabled')
         self._reset_btn.config(state='normal' if self._connected else 'disabled')
         self._log_append('Waiting for READY…', 'status')
@@ -999,6 +1024,7 @@ class DosimeterApp:
         self._connected   = False
         self._board_ready = False
         self._running     = False
+        self._clear_address_capture()
         if self._reader:
             self._reader.close()
             self._reader = None
@@ -1038,8 +1064,12 @@ class DosimeterApp:
                                 self._addr_remaining -= 1
                                 continue
                             else:
-                                # Unexpected line mid-stream — fall through to parse
-                                self._addr_remaining = 0
+                                # Unexpected line mid-stream; drop partial capture before parsing it.
+                                self._log_append(
+                                    'address stream aborted before expected count; '
+                                    'dropping partial address list',
+                                    'alert')
+                                self._clear_address_capture()
                         record = parse_line(raw, ts_unix)
                         if record:
                             self._handle_record(record)
@@ -1119,14 +1149,26 @@ class DosimeterApp:
             self._addr_remaining = 0
             self._addr_overflow  = False
             addrs = record['addrs']
-            self._bg.update(addrs)
-            hot, rare = self._bg.classify(addrs)
-            clusters  = self._bg.find_clusters(rare)
             iteration = self._store.iteration + 1 if self._store else 0
+            addr_complete = (
+                not record.get('addr_overflow')
+                and record.get('flip_count', 0) == len(addrs)
+            )
+            record['addr_complete'] = addr_complete
             if self._sweep_win and self._sweep_win._running:
                 self._sweep_win.on_flip(record)
-            self._rare_records.append((iteration, len(rare), clusters))
-            self._raster_records.append((iteration, hot, rare))
+            if addr_complete:
+                self._bg.update(addrs)
+                hot, rare = self._bg.classify(addrs)
+                clusters  = self._bg.find_clusters(rare)
+                self._rare_records.append((iteration, len(rare), clusters))
+                self._raster_records.append((iteration, hot, rare))
+            else:
+                clusters = []
+                self._log_append(
+                    'address analysis skipped for this cycle because the '
+                    'captured address list is incomplete or overflowed',
+                    'alert' if record.get('addr_overflow') else 'status')
             # Update BG status bar
             if self._bg.ready:
                 self._slabels['bg'].config(
@@ -1177,10 +1219,18 @@ class DosimeterApp:
                 self._redraw()
             if self._rare_records:
                 self._redraw_denoised()
+            else:
+                self._draw_empty_denoised()
             if self._raster_records:
                 self._redraw_raster()
-        except Exception:
-            pass
+            else:
+                self._draw_empty_raster()
+            self._last_plot_error = None
+        except Exception as e:
+            msg = str(e)
+            if msg != self._last_plot_error:
+                self._last_plot_error = msg
+                self._log_append(f'Plot update error: {e}', 'alert')
         finally:
             self.root.after(self.PLOT_MS, self._update_plot)
 
@@ -1202,6 +1252,12 @@ class DosimeterApp:
             my = [y for y, h in zip(ys, hs) if h == hold_s]
             if mx:
                 ax.scatter(mx, my, color=color, s=18, zorder=3, label=f'{hold_s} s hold')
+        fallback_colors = ['#2196F3', '#009688', '#795548', '#607D8B', '#E91E63']
+        for idx, hold_s in enumerate(h for h in sorted(set(hs)) if h not in HOLD_COLORS):
+            mx = [x for x, h in zip(xs, hs) if h == hold_s]
+            my = [y for y, h in zip(ys, hs) if h == hold_s]
+            ax.scatter(mx, my, color=fallback_colors[idx % len(fallback_colors)],
+                       s=18, zorder=3, label=f'{hold_s} s hold')
         ax.plot(xs, ys, color='#888', linewidth=0.8, zorder=2)
 
         if self._alert is not None:
@@ -1246,8 +1302,13 @@ class DosimeterApp:
         # Temperature overlay (secondary right axis)
         if self._temp_records and self._start_unix:
             t_start = records[0]['ts_unix']
-            tx = [t - start for t, _ in self._temp_records if t >= t_start]
-            ty = [c for t, c in self._temp_records if t >= t_start]
+            temp_points = [
+                (t - start, c)
+                for t, c in self._temp_records
+                if t >= t_start and c is not None
+            ]
+            tx = [t for t, _ in temp_points]
+            ty = [c for _, c in temp_points]
             if tx:
                 ax_t.set_visible(True)
                 ax_t.plot(tx, ty, color='#FF9800', linewidth=1.0,
@@ -1314,6 +1375,7 @@ class DosimeterApp:
         # Collect all seen addresses and assign a rank
         all_addrs = sorted({a for _, hot, rare in records for a in hot + rare})
         if not all_addrs:
+            self._draw_empty_raster()
             return
         rank = {a: i for i, a in enumerate(all_addrs)}
 
@@ -1444,6 +1506,10 @@ class DosimeterApp:
         self._raster_records.clear()
         self._temp_records.clear()
         self._bg = BackgroundModel()
+        self._clear_address_capture()
+        self._draw_empty_plot()
+        self._draw_empty_denoised()
+        self._draw_empty_raster()
         self._log_append(f'Replaying {path}', 'status')
 
         try:
@@ -1474,14 +1540,39 @@ class DosimeterApp:
                     elif record.get('type') == 'TEMP':
                         self._temp_records.append((record['ts_unix'], record.get('temp_c')))
                         self._store.ingest(record)
+                    elif record.get('type') == 'ADDRS_HDR':
+                        self._addr_remaining = record.get('count', 0)
+                        self._addr_buf = []
+                        self._addr_overflow = record.get('addr_overflow', False)
+                        self._store.ingest(record)
+                    elif record.get('type') == 'ADDR':
+                        if self._addr_remaining > 0:
+                            self._addr_buf.append(record.get('addr'))
+                            self._addr_remaining -= 1
+                        self._store.ingest(record)
                     elif record.get('type') == 'FLIP':
+                        if 'addrs' not in record:
+                            record['addrs'] = list(self._addr_buf)
+                            record['addr_overflow'] = self._addr_overflow
                         addrs = record.get('addrs', [])
-                        self._bg.update(addrs)
-                        hot, rare = self._bg.classify(addrs)
-                        clusters = self._bg.find_clusters(rare)
                         iteration = self._store.iteration + 1
-                        self._rare_records.append((iteration, len(rare), clusters))
-                        self._raster_records.append((iteration, hot, rare))
+                        addr_complete = (
+                            not record.get('addr_overflow')
+                            and record.get('flip_count', 0) == len(addrs)
+                        )
+                        record['addr_complete'] = addr_complete
+                        if addr_complete:
+                            self._bg.update(addrs)
+                            hot, rare = self._bg.classify(addrs)
+                            clusters = self._bg.find_clusters(rare)
+                            self._rare_records.append((iteration, len(rare), clusters))
+                            self._raster_records.append((iteration, hot, rare))
+                        else:
+                            self._log_append(
+                                'replay skipped address analysis for an incomplete '
+                                'or overflowed address list',
+                                'alert' if record.get('addr_overflow') else 'status')
+                        self._clear_address_capture()
                         self._store.ingest(record)
                     else:
                         self._store.ingest(record)

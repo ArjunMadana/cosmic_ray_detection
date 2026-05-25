@@ -62,7 +62,7 @@ python tools/uart_logger.py --replay data/baseline_20260403_142200.jsonl
 2. **Fill in** Name and Description (stored in the file header)
 3. **Select port** from the dropdown (click ↺ to refresh the list)
 4. **Connect** — the board starts being logged immediately
-5. **Change hold time** — type a number (1–9999 s) in *Hold time* and press Enter or click *Send to board*.  The board echoes `INTERVAL:NNNNs` to confirm.
+5. **Select hold, pattern, and refresh** in the GUI, then click Start. The GUI sends `H`, `P`, `R`, then `G`; physical switches/buttons are not part of the active control path.
 6. **Add notes** — type anything in the Annotation box and press Enter.  Notes get a timestamp and appear as yellow dashed lines on the plot and in the JSONL file.  Useful for recording: "tilted board 45°", "started heating lamp", "changed refresh rate", etc.
 7. **Disconnect** — saves files and prints a session summary in the log.
 
@@ -79,17 +79,19 @@ One row per SCAN cycle.  First three lines are `#`-prefixed metadata (loadable w
 # experiment: baseline
 # description: Room temp, refresh OFF
 # start_time: 2026-04-03T14:22:00+00:00
-timestamp,iteration,hold_s,refresh_rate,flip_count,experiment
+timestamp,iteration,hold_s,refresh_rate,pattern,flip_count,addr_overflow,temp_c,experiment
 ```
 
 ### JSONL  
-Every event (FLIP, REFRESH, INTERVAL, NOTE) in order.  Used by `--replay` to reconstruct the full session including notes.
+Every event in order. FLIP records include captured address arrays when available. Replay also understands captures where `ADDRS` and address records appear separately before the FLIP result.
+
+Address-based graphing is conservative: raw flip counts are always plotted, but the de-noised and raster tabs only consume complete, non-overflowed address captures.
 
 ---
 
 ## Changing hold time from the GUI
 
-Type seconds in the *Hold time* field, press Enter.  The board responds with `INTERVAL:NNNNs` (visible in the log) then uses that hold time from the next cycle onward.  Buttons on the board still work as a fallback.
+Type seconds in the *Hold time* field and click Start or Send. The board responds with `INTERVAL:NNNNs` and uses the new hold time from the next cycle boundary. Board buttons are not used for experiment control.
 
 ---
 
@@ -103,9 +105,12 @@ Set *Alert if flips >* N. Any FLIP record above the threshold is highlighted red
 
 | Message | Example | Trigger |
 |---|---|---|
-| FLIP result | `HOLD:0005s FLIPS:00000ABC` | End of every SCAN cycle |
-| Refresh change | `REFRESH:OFF` / `SLOW` / `NORM` / `FAST` | SW0/SW1 toggled |
-| Interval change | `INTERVAL:0060s` | Button pressed or GUI command |
+| FLIP result | `HOLD:0005s PAT:AA FLIPS:00000ABC` | End of every SCAN cycle |
+| Address header | `ADDRS:0002 OVF:0` | Before each FLIP result |
+| Refresh change | `REFRESH:OFF` / `SLOW` / `NORM` / `FAST` | GUI command accepted |
+| Pattern change | `PATTERN:AA` | GUI command accepted |
+| Interval change | `INTERVAL:0060s` | GUI command accepted |
+| Temperature | `TEMP:7A3` | After each FLIP result |
 
 | Command (laptop → board) | Example | Effect |
 |---|---|---|

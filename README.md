@@ -120,3 +120,9 @@ python -B -m unittest tools.test_uart_logger_parser tools.test_run_diagnostics
 ```
 
 The HDL testbench is at `cosmic_ray_detection.srcs/sim_1/new/detector_fsm_tb.v`. It uses a small AXI memory model to check full FILL/FILL2/SCAN coverage, randomized ready/valid stalls, and pattern changes during scans.
+
+## Python Tooling Notes
+
+The GUI logs raw cycle results even when address capture is incomplete, but the de-noised and raster tabs only consume address lists when `flip_count == len(addrs)` and `OVF:0`. Incomplete or overflowed address captures are preserved in JSONL and flagged in the log instead of being folded into the background model.
+
+`tools/run_diagnostics.py` defaults to production telemetry. Legacy `DIAG`/`VDIAG` records are still parsed for replay, but `--diag-modes` is ignored in live mode unless `--expect-diag` is set for an older diagnostic bitstream.

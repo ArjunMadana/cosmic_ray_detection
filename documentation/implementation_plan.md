@@ -69,7 +69,7 @@ Use replay mode on old captures to confirm whether the file has enough informati
 python -B tools/run_diagnostics.py --replay data/experiment_20260424_104838.jsonl
 ```
 
-Old captures without `DIAG` are classified as `NO_DIAG`: they can confirm the first-read symptom and address-list truncation, but cannot prove whether the fault occurred in FILL, FILL2, SCAN, AXI responses, or pattern latching.
+Old or production captures without `DIAG` are classified as `FLIPS_NO_DIAG` when flips are present: they can confirm the symptom and address-list truncation, but cannot prove whether the fault occurred in FILL, FILL2, SCAN, AXI responses, or pattern latching.
 
 Use live mode after programming the production firmware:
 
@@ -77,7 +77,7 @@ Use live mode after programming the production firmware:
 python -B tools/run_diagnostics.py --port auto --hold 1 --refresh NORM --patterns FF,00,55,AA,FF --cycles 3
 ```
 
-The runner sends `X`, waits for `READY`, then runs `H`, `P`, `R`, `G` sequences. It writes a raw JSONL capture, a CSV summary, and a Markdown report under `data/diagnostics`. It still understands older `DIAG`/`VDIAG` records for replay, but current firmware does not emit them.
+The runner sends `X`, waits for `READY`, then runs `H`, `P`, `R`, `G` sequences. It writes a raw JSONL capture, a CSV summary, and a Markdown report under `data/diagnostics`. It still understands older `DIAG`/`VDIAG` records for replay, but current firmware does not emit them. Production Markdown reports use a compact table; the legacy FILL/SCAN/VDIAG columns only appear when those records are actually present.
 
 Classification tags:
 
@@ -94,6 +94,9 @@ Classification tags:
 - `VERIFY_PREVIOUS_PATTERN`: pre-hold verify read the previous pattern.
 - `HOLD_OR_SCAN_FAILED`: pre-hold verify was clean, but the measured scan found mismatches.
 - `DATA_MISMATCH_WITH_CLEAN_BUS`: fill/scan coverage and AXI responses were clean, but mismatches remain.
+- `FLIPS_NO_DIAG`: production telemetry reported flips without diagnostic counters; use the raw result, but do not infer the failing stage from that capture alone.
+
+GUI address analysis is conservative: raw `FLIP` rows are always logged, but the de-noised background model and address raster only consume complete, non-overflowed address lists. Replay reconstructs address arrays from either embedded `addrs` fields or separate `ADDRS`/address records before drawing the denoised and raster tabs.
 
 ## Remaining Hardware Acceptance
 
@@ -103,6 +106,6 @@ Classification tags:
 - The 2026-05-25 `VERIFY` and refresh-sweep runs showed `VDIAG` failures before `HOLD`, with `FAST` much worse. Rebuild the MIG-internal-refresh baseline next to isolate the custom refresh override.
 - The 2026-05-25 MIG-internal-refresh baseline still showed pre-hold `FILL_VERIFY_FAILED` in 11 of 15 cycles, so custom refresh override is not the whole cause.
 - The 2026-05-25 strict single-outstanding AXI write build (`data/diagnostics/diagnostic_live_20260525_131823.*`) fixed the VERIFY run: all 15 cycles were clean, `AW=W=B=0x02000000`, and `VC=0`.
-- Next hardware step: run the production sanity sequence with the same pattern list and confirm all reported `FLIPS` values stay at zero.
+- The 2026-05-25 production-clean sanity run (`data/diagnostics/diagnostic_live_20260525_140429.*`) passed: all 15 normal cycles were clean with `FLIPS=0`, `ADDRS:0000 OVF:0`, and no `DIAG`/`VDIAG` output.
 - Address streaming should be rechecked with production firmware when real flips are present; the previous `ADDR_STREAM_BAD_FIRST` signal came from diagnostic firmware.
-- Refresh selector measurement and MIG refresh-control restoration are deferred until the graphing interface and production baseline are stable.
+- Refresh selector measurement and MIG refresh-control restoration are deferred until the graphing interface is stable.

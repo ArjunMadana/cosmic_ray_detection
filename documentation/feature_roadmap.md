@@ -29,7 +29,8 @@ Board acknowledgements and telemetry: `READY`, `INTERVAL`, `PATTERN`, `REFRESH`,
 - Start sends `H`, `P`, `R`, then `G`.
 - Reset Board is enabled immediately after serial connection.
 - Start remains disabled until `READY`.
-- Replay redraws raw, denoised, and raster tabs.
+- Replay redraws raw, denoised, and raster tabs, reconstructing address arrays from either embedded `addrs` fields or separate `ADDRS`/address records.
+- De-noised and raster views only consume complete, non-overflowed address captures.
 
 ### Tooling
 
@@ -50,7 +51,7 @@ Board acknowledgements and telemetry: `READY`, `INTERVAL`, `PATTERN`, `REFRESH`,
 
 ## Completed Validation
 
-- `python -B -m unittest tools.test_uart_logger_parser`
+- `python -B -m unittest tools.test_uart_logger_parser tools.test_run_diagnostics`
 - Python AST syntax check for `tools/uart_logger.py` and parser tests.
 - `xvlog` compile of `detector_fsm.v` and `detector_fsm_tb.v`.
 - `xsim detector_fsm_tb_sim -runall` with `detector_fsm_tb PASS`.

@@ -51,7 +51,7 @@ The GUI stores all records in JSONL and marks FLIP rows with `addr_overflow` whe
 python -B tools/run_diagnostics.py --port auto --hold 1 --refresh NORM --patterns FF,00,55,AA,FF --cycles 3
 ```
 
-It resets with `X`, waits for `READY`, sends `H`, `P`, `R`, and `G`, then writes raw JSONL plus CSV/Markdown summaries under `data/diagnostics`. It still understands older `DIAG`/`VDIAG` captures for replay, but current production firmware does not emit those lines. Replay mode classifies existing captures:
+It resets with `X`, waits for `READY`, sends `H`, `P`, `R`, and `G`, then writes raw JSONL plus CSV/Markdown summaries under `data/diagnostics`. It still understands older `DIAG`/`VDIAG` captures for replay, but current production firmware does not emit those lines. Production reports now use a compact table unless legacy diagnostic records are present. Replay mode classifies existing captures:
 
 ```bash
 python -B tools/run_diagnostics.py --replay data/experiment_20260424_104838.jsonl
@@ -111,16 +111,21 @@ Latest hardware result before this baseline change:
 - `data/diagnostics/diagnostic_live_20260525_121656.*`: refresh sweep showed `OFF`, `SLOW`, `NORM`, and `FAST` all can fail before `HOLD`; `FAST` was much worse.
 - `data/diagnostics/diagnostic_live_20260525_125418.*`: MIG-internal-refresh baseline still showed `FILL_VERIFY_FAILED` before `HOLD` in 11 of 15 cycles. This means the custom refresh override is not the whole cause; proceed to strict single-outstanding AXI write sequencing.
 - `data/diagnostics/diagnostic_live_20260525_131823.*`: strict single-outstanding AXI write sequencing fixed the VERIFY run. All 15 cycles were `CLEAN`, including pattern transitions. `F1=F2=SC=0x01000000`, `AW=W=B=0x02000000`, `BERR=RERR=0`, `VC=0`, and `FLIPS=0`.
+- `data/diagnostics/diagnostic_live_20260525_140429.*`: production-clean firmware sanity run passed. All 15 normal cycles were `CLEAN` with `FLIPS=0`, `ADDRS:0000 OVF:0`, and no `DIAG`/`VDIAG` output.
 
 Current source after production cleanup:
 
 - FILL/FILL2 now issue one AXI write at a time: latch address/data, wait for AW handshake, wait for W handshake, wait for B response, then advance to the next word.
 - Temporary diagnostic hardware modes and telemetry were removed from the active FSM.
-- The next hardware run should validate normal operation with the fixed write sequencer:
+- Python GUI address analysis now skips incomplete or overflowed address lists instead of feeding them into the de-noised background model or raster plot. Replay rebuilds address arrays from either embedded `addrs` fields or separate `ADDRS`/address records.
+- GUI CSV rows now wait for the following `TEMP` record when available, so `temp_c` corresponds to the just-reported cycle instead of the previous latest temperature sample.
+- Normal operation with the fixed write sequencer has passed this command:
 
 ```bash
 python -B tools/run_diagnostics.py --port COM3 --baud 115200 --hold 1 --refresh NORM --patterns FF,00,55,AA,FF --cycles 3
 ```
+
+Next work can shift to the graphing interface and longer-duration experiment UX.
 
 ## Flashing Notes
 

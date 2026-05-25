@@ -221,7 +221,7 @@ def classify_cycle(cycle, expected_words=EXPECTED_WORDS, previous_pattern=None):
         if cycle.flip_count() == 0:
             tags.append("CLEAN")
         else:
-            tags.append("NO_DIAG")
+            tags.append("FLIPS_NO_DIAG")
     else:
         if diag["fill1_count"] != expected_words:
             tags.append("WRITE_COVERAGE_FILL1")
@@ -753,10 +753,11 @@ def build_report(rows, expected_words):
         "PREVIOUS_PATTERN_DATA", "FILL_VERIFY_FAILED", "VERIFY_PREVIOUS_PATTERN",
         "HOLD_OR_SCAN_FAILED",
     ]
-    if tag_counts.get("NO_DIAG"):
+    if tag_counts.get("FLIPS_NO_DIAG"):
         lines.append(
-            "At least one cycle has no DIAG record. This can confirm the symptom "
-            "from old captures, but it cannot locate the failing stage."
+            "At least one production-telemetry cycle reported flips without DIAG. "
+            "This confirms the observed data mismatch, but production firmware cannot "
+            "localize the failing stage without a diagnostic build."
         )
     elif tag_counts.get("FILL_VERIFY_FAILED"):
         lines.append(
@@ -793,23 +794,39 @@ def build_report(rows, expected_words):
     else:
         lines.append("No decisive diagnostic class was produced.")
 
-    lines += [
-        "",
-        "## Cycles",
-        "",
-        "| Cycle | Mode | Pat | Prev | Flips | Addrs | F1 | F2 | SC | BERR | RERR | AW | W | B | BAD | GOT | EXP | VC | VBAD | VGOT | VEXP | Tags |",
-        "|---:|:---:|:---:|:---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|:---:|:---:|---:|:---:|:---:|:---:|:---|",
-    ]
-    for row in rows:
-        lines.append(
-            f"| {row['cycle']} | {row['diag_mode']} | {row['pattern']} | {row['previous_pattern']} | "
-            f"{row['flip_count']} | {row['addr_count']} | {row['fill1_count']} | "
-            f"{row['fill2_count']} | {row['scan_count']} | {row['bresp_errors']} | "
-            f"{row['rresp_errors']} | {row['aw_count']} | {row['w_count']} | "
-            f"{row['b_count']} | {row['first_bad_addr']} | "
-            f"{row['first_bad_got']} | {row['first_bad_exp']} | {row['verify_count']} | "
-            f"{row['verify_bad_addr']} | {row['verify_got']} | {row['verify_exp']} | {row['tags']} |"
-        )
+    lines += ["", "## Cycles", ""]
+    has_legacy_diag = any(
+        row["diag_mode"] not in ("", "NORMAL")
+        or row["fill1_count"] != ""
+        or row["verify_count"] != ""
+        for row in rows
+    )
+    if has_legacy_diag:
+        lines += [
+            "| Cycle | Mode | Pat | Prev | Flips | Addrs | F1 | F2 | SC | BERR | RERR | AW | W | B | BAD | GOT | EXP | VC | VBAD | VGOT | VEXP | Tags |",
+            "|---:|:---:|:---:|:---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|:---:|:---:|---:|:---:|:---:|:---:|:---|",
+        ]
+        for row in rows:
+            lines.append(
+                f"| {row['cycle']} | {row['diag_mode']} | {row['pattern']} | {row['previous_pattern']} | "
+                f"{row['flip_count']} | {row['addr_count']} | {row['fill1_count']} | "
+                f"{row['fill2_count']} | {row['scan_count']} | {row['bresp_errors']} | "
+                f"{row['rresp_errors']} | {row['aw_count']} | {row['w_count']} | "
+                f"{row['b_count']} | {row['first_bad_addr']} | "
+                f"{row['first_bad_got']} | {row['first_bad_exp']} | {row['verify_count']} | "
+                f"{row['verify_bad_addr']} | {row['verify_got']} | {row['verify_exp']} | {row['tags']} |"
+            )
+    else:
+        lines += [
+            "| Cycle | Pat | Prev | Hold | Refresh | Flips | Addrs | OVF | Tags |",
+            "|---:|:---:|:---:|---:|:---:|---:|---:|:---:|:---|",
+        ]
+        for row in rows:
+            lines.append(
+                f"| {row['cycle']} | {row['pattern']} | {row['previous_pattern']} | "
+                f"{row['hold_s']} | {row['refresh']} | {row['flip_count']} | "
+                f"{row['addr_count']} | {int(bool(row['addr_overflow']))} | {row['tags']} |"
+            )
     lines.append("")
     return "\n".join(lines)
 
@@ -849,7 +866,7 @@ def build_argparser():
                         help="Comma-separated refresh modes: OFF, SLOW, NORM, FAST.")
     parser.add_argument("--patterns", type=parse_patterns, default=parse_patterns("FF,00,55,AA,FF"))
     parser.add_argument("--diag-modes", type=parse_diag_modes, default=parse_diag_modes("NORMAL"),
-                        help="Legacy diagnostic modes for older firmware captures.")
+                        help="Legacy diagnostic modes; ignored in live production mode unless --expect-diag is set.")
     parser.add_argument("--expect-diag", action="store_true",
                         help="Wait for DIAG/VDIAG records from older diagnostic firmware.")
     parser.add_argument("--cycles", type=int, default=3, help="Cycles per pattern in live mode.")
@@ -888,6 +905,9 @@ def main(argv=None):
         raise SystemExit("--refresh must include at least one mode")
     if not args.diag_modes:
         raise SystemExit("--diag-modes must include at least one mode")
+    if not args.replay and not args.expect_diag and args.diag_modes != ["NORMAL"]:
+        print("WARNING: production firmware ignores --diag-modes without --expect-diag; using NORMAL only.")
+        args.diag_modes = ["NORMAL"]
     if args.scan_baud:
         baud_scan(args)
     elif args.probe:

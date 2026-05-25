@@ -103,6 +103,32 @@ class DataStoreTests(unittest.TestCase):
             self.assertEqual(saved["addrs"], [0, 4])
             self.assertTrue(saved["addr_overflow"])
 
+    def test_csv_flip_row_uses_following_temperature_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = DataStore(tmp, "temp_test", "unit", "2026-05-24T00:00:00+00:00")
+            store.ingest({
+                "type": "FLIP",
+                "timestamp": "2026-05-24T00:00:00+00:00",
+                "ts_unix": TS,
+                "hold_s": 1,
+                "pattern": "FF",
+                "flip_count": 0,
+                "addr_overflow": False,
+            })
+            store.ingest({
+                "type": "TEMP",
+                "timestamp": "2026-05-24T00:00:01+00:00",
+                "ts_unix": TS + 1,
+                "temp_c": 42.5,
+            })
+            csv_path = Path(store.csv_path)
+            store.close()
+
+            lines = [line for line in csv_path.read_text().splitlines()
+                     if line and not line.startswith("#")]
+            self.assertEqual(len(lines), 2)
+            self.assertTrue(lines[1].endswith(",42.5,temp_test"))
+
 
 if __name__ == "__main__":
     unittest.main()

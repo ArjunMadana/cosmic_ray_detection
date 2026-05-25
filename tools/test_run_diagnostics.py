@@ -7,6 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from run_diagnostics import (
+    build_report,
     Cycle,
     classify_cycle,
     parse_diag_modes,
@@ -94,7 +95,7 @@ class DiagnosticClassificationTests(unittest.TestCase):
 
     def test_no_diag_is_symptom_only(self):
         cycle = Cycle(index=1, flip=flip(23, "FF"))
-        self.assertIn("NO_DIAG", classify_cycle(cycle, EXPECTED))
+        self.assertIn("FLIPS_NO_DIAG", classify_cycle(cycle, EXPECTED))
 
     def test_zero_flips_without_diag_is_clean_for_production_firmware(self):
         cycle = Cycle(index=1, flip=flip(0, "FF"))
@@ -208,6 +209,58 @@ class DiagnosticReplayTests(unittest.TestCase):
             cycles = replay_jsonl(path)
         self.assertEqual(len(cycles), 1)
         self.assertEqual(cycles[0][0].addrs, [0, 4])
+
+    def test_replay_reconstructs_address_stream_before_flip(self):
+        rows = [
+            {"type": "ADDRS_HDR", "count": 2, "addr_overflow": False},
+            {"type": "ADDR", "addr": 0},
+            {"type": "ADDR", "addr": 4},
+            {"type": "FLIP", "hold_s": 1, "pattern": "AA", "flip_count": 2},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "stream_addrs.jsonl"
+            path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+            cycles = replay_jsonl(path)
+        self.assertEqual(len(cycles), 1)
+        self.assertEqual(cycles[0][0].addrs, [0, 4])
+
+    def test_production_report_omits_empty_legacy_columns(self):
+        cycle = Cycle(
+            index=1,
+            requested_pattern="AA",
+            requested_refresh="NORM",
+            requested_hold_s=1,
+            flip=flip(0, "AA"),
+        )
+        row = build_report([{
+            "cycle": cycle.index,
+            "pattern": cycle.pattern(),
+            "previous_pattern": "",
+            "hold_s": 1,
+            "refresh": "NORM",
+            "diag_mode": "NORMAL",
+            "flip_count": cycle.flip_count(),
+            "addr_count": 0,
+            "addr_overflow": False,
+            "fill1_count": "",
+            "fill2_count": "",
+            "scan_count": "",
+            "bresp_errors": "",
+            "rresp_errors": "",
+            "aw_count": "",
+            "w_count": "",
+            "b_count": "",
+            "first_bad_addr": "",
+            "first_bad_got": "",
+            "first_bad_exp": "",
+            "verify_count": "",
+            "verify_bad_addr": "",
+            "verify_got": "",
+            "verify_exp": "",
+            "tags": "CLEAN",
+        }], EXPECTED)
+        self.assertIn("| Cycle | Pat | Prev | Hold | Refresh | Flips | Addrs | OVF | Tags |", row)
+        self.assertNotIn("| Cycle | Mode | Pat |", row)
 
     def test_replay_attaches_vdiag_after_diag(self):
         rows = [
