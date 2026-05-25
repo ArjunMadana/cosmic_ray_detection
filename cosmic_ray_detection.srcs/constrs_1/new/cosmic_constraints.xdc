@@ -29,20 +29,3 @@ set_property CONFIG_VOLTAGE 3.3 [current_design]
 set_property CFGBVS VCCO [current_design]
 set_property BITSTREAM.CONFIG.SPI_BUSWIDTH 4 [current_design]
 set_property CONFIG_MODE SPIx4 [current_design]
-
-# UART text formatting is slow-control logic.  The FSM waits two UI clocks
-# after changing the print selector/index before capturing uart_data, and the
-# UART transmitter then keeps ready low for an entire byte time.
-set uart_print_sources [get_cells -hier -quiet -regexp {.*u_fsm/(print_idx|print_kind)_reg.*}]
-set uart_print_dests   [get_cells -hier -quiet -regexp {.*u_fsm/uart_data_reg.*}]
-if {[llength $uart_print_sources] > 0 && [llength $uart_print_dests] > 0} {
-    set_multicycle_path -setup 2 -from $uart_print_sources -to $uart_print_dests
-    set_multicycle_path -hold 1 -from $uart_print_sources -to $uart_print_dests
-}
-
-set uart_print_end_sources [get_cells -hier -quiet -regexp {.*u_fsm/(print_idx|print_len)_reg.*}]
-set uart_print_end_dests   [get_cells -hier -quiet -regexp {.*u_fsm/state_reg.*}]
-if {[llength $uart_print_end_sources] > 0 && [llength $uart_print_end_dests] > 0} {
-    set_multicycle_path -setup 2 -from $uart_print_end_sources -to $uart_print_end_dests
-    set_multicycle_path -hold 1 -from $uart_print_end_sources -to $uart_print_end_dests
-}

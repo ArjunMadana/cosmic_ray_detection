@@ -1,8 +1,8 @@
 # `ext_refresh_tick` Trace
 
-Last updated: 2026-05-24
+Last updated: 2026-05-25
 
-The refresh source is controlled by `detector_fsm.refresh_tick_out`, which is selected through the GUI with `R<n>\n`.
+Production baseline note: `detector_fsm.refresh_tick_out` is still routed through the generated hierarchy, but MIG `rank_common` uses its internal `refresh_tick_lcl`. `R<n>\n` is accepted/logged and does not control MIG refresh in this baseline.
 
 ## Signal Path
 
@@ -27,10 +27,10 @@ In `mig_7series_v4_2_rank_common.v`:
 ```verilog
 input ext_refresh_tick;
 output wire refresh_tick;
-assign refresh_tick = ext_refresh_tick;
+assign refresh_tick = refresh_tick_lcl;
 ```
 
-The internal MIG refresh timer remains present in generated code, but its tick is not used after the patch. This lets firmware select `OFF`, `SLOW`, `NORM`, or `FAST` through UART.
+The internal MIG refresh timer is intentionally used in this baseline while normal experiment correctness and the graphing interface are stabilized.
 
 ## Hook
 
@@ -40,4 +40,4 @@ The patch is maintained by:
 tools/expose_device_temp.tcl
 ```
 
-The file name is historical; the script now patches both `device_temp_0` and `ext_refresh_tick`.
+The file name is historical; the script now patches `device_temp_0` and preserves `ext_refresh_tick` routing while leaving MIG refresh internal for the baseline build.

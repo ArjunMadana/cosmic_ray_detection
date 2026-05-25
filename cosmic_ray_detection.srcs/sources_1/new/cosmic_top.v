@@ -1,4 +1,5 @@
     `timescale 1ns / 1ps
+    `include "uart_boot_banner.v"
     //////////////////////////////////////////////////////////////////////////////////
     // Company: 
     // Engineer: 
@@ -85,9 +86,22 @@
     assign reset = 1'b0;
 
     wire        fsm_rst;
-    assign fsm_rst = !calib_complete;
+    wire        boot_active;
+    wire        boot_done;
+    assign fsm_rst = !calib_complete || !boot_done;
 
-    localparam UI_CLK_HZ = 166_666_667;
+    localparam UI_CLK_HZ = 150_000_000;
+    localparam UART_BAUD = 115_200;
+
+    reg [7:0] boot_rst_count = 8'd0;
+    wire      boot_rst;
+    assign boot_rst = !boot_rst_count[7];
+
+    always @(posedge ui_clk) begin
+        if (!boot_rst_count[7]) begin
+            boot_rst_count <= boot_rst_count + 1'b1;
+        end
+    end
     
     // Block design instance
     cosmic_bd_wrapper u_bd (
@@ -172,23 +186,53 @@
         .temp_raw       (device_temp)
     );
     
+    wire [7:0]  boot_uart_data;
+    wire        boot_uart_valid;
+    wire        boot_uart_ready;
+    wire        boot_uart_txd;
+    wire        fsm_uart_txd;
+
+    uart_boot_banner u_boot_banner (
+        .clk        (ui_clk),
+        .rst        (boot_rst),
+        .uart_ready (boot_uart_ready),
+        .uart_data  (boot_uart_data),
+        .uart_valid (boot_uart_valid),
+        .active     (boot_active),
+        .done       (boot_done)
+    );
+
+    uart_tx #(
+        .CLK_FREQ  (UI_CLK_HZ),
+        .BAUD_RATE (UART_BAUD)
+    ) u_boot_uart_tx (
+        .clk   (ui_clk),
+        .rst   (boot_rst),
+        .data  (boot_uart_data),
+        .valid (boot_uart_valid),
+        .ready (boot_uart_ready),
+        .tx    (boot_uart_txd)
+    );
+
+    assign uart_txd = boot_active ? boot_uart_txd : fsm_uart_txd;
+
     // UART TX
     uart_tx #(
         .CLK_FREQ  (UI_CLK_HZ),
-        .BAUD_RATE (921_600)
+        .BAUD_RATE (UART_BAUD)
     ) u_uart_tx (
         .clk   (ui_clk),
         .rst   (fsm_rst),
         .data  (uart_data),
         .valid (uart_valid),
         .ready (uart_ready),
-        .tx    (uart_txd)
+        .tx    (fsm_uart_txd)
     );
 
     // UART RX — receives hold-time commands from laptop
     uart_rx #(
         .CLK_FREQ  (UI_CLK_HZ),
-        .BAUD_RATE (921_600)
+        .BAUD_RATE (UART_BAUD)
     ) u_uart_rx (
         .clk   (ui_clk),
         .rst   (fsm_rst),

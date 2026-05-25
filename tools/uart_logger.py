@@ -44,12 +44,17 @@ REFRESH_RE   = re.compile(r'REFRESH:(OFF|SLOW|NORM|FAST)')
 INTV_RE      = re.compile(r'INTERVAL:(\d+)s')
 PATTERN_RE   = re.compile(r'PATTERN:(FF|00|55|AA)')
 READY_RE     = re.compile(r'^READY$')
+BOOT_RE      = re.compile(r'^BOOT$')
 ADDRS_HDR_RE = re.compile(r'^ADDRS:([0-9A-Fa-f]{4})(?:\s+OVF:([01]))?$')
 ADDR_LINE_RE = re.compile(r'^([0-9A-Fa-f]{7})$')
 DIAG_RE      = re.compile(
     r'DIAG:F1:([0-9A-Fa-f]{8}) F2:([0-9A-Fa-f]{8}) SC:([0-9A-Fa-f]{8}) '
-    r'BERR:([0-9A-Fa-f]{8}) RERR:([0-9A-Fa-f]{8}) BAD:([0-9A-Fa-fX]{7}) '
-    r'GOT:([0-9A-Fa-fX]{8}) EXP:([0-9A-Fa-fX]{8}) OVF:([01])')
+    r'BERR:([0-9A-Fa-f]{8}) RERR:([0-9A-Fa-f]{8})'
+    r'(?: AW:([0-9A-Fa-f]{8}) W:([0-9A-Fa-f]{8}) B:([0-9A-Fa-f]{8}))? '
+    r'BAD:([0-9A-Fa-fX]{7}) GOT:([0-9A-Fa-fX]{8}) EXP:([0-9A-Fa-fX]{8}) OVF:([01])')
+VDIAG_RE     = re.compile(
+    r'VDIAG:VC:([0-9A-Fa-f]{8}) VBAD:([0-9A-Fa-fX]{7}) '
+    r'VGOT:([0-9A-Fa-fX]{8}) VEXP:([0-9A-Fa-fX]{8})')
 
 HOLD_COLORS = {5: '#4CAF50', 10: '#2196F3', 20: '#FF9800', 30: '#F44736'}
 REFRESH_LABEL = {'OFF': 'Refresh OFF', 'SLOW': 'Slow (~100ms)',
@@ -143,6 +148,8 @@ def parse_line(raw_bytes, ts_unix):
                 'pattern': m.group(1).upper(), 'raw': line}
     if READY_RE.search(line):
         return {'type': 'READY', 'timestamp': ts, 'ts_unix': ts_unix, 'raw': line}
+    if BOOT_RE.search(line):
+        return {'type': 'BOOT', 'timestamp': ts, 'ts_unix': ts_unix, 'raw': line}
     m = ADDRS_HDR_RE.match(line)
     if m:
         return {'type': 'ADDRS_HDR', 'timestamp': ts, 'ts_unix': ts_unix,
@@ -164,10 +171,23 @@ def parse_line(raw_bytes, ts_unix):
                 'scan_count': int(m.group(3), 16),
                 'bresp_errors': int(m.group(4), 16),
                 'rresp_errors': int(m.group(5), 16),
-                'first_bad_addr': hex_or_none(m.group(6)),
-                'first_bad_got': hex_or_none(m.group(7)),
-                'first_bad_exp': hex_or_none(m.group(8)),
-                'addr_overflow': m.group(9) == '1',
+                'aw_count': int(m.group(6), 16) if m.group(6) is not None else None,
+                'w_count': int(m.group(7), 16) if m.group(7) is not None else None,
+                'b_count': int(m.group(8), 16) if m.group(8) is not None else None,
+                'first_bad_addr': hex_or_none(m.group(9)),
+                'first_bad_got': hex_or_none(m.group(10)),
+                'first_bad_exp': hex_or_none(m.group(11)),
+                'addr_overflow': m.group(12) == '1',
+                'raw': line}
+    m = VDIAG_RE.search(line)
+    if m:
+        def hex_or_none(value):
+            return None if 'X' in value.upper() else int(value, 16)
+        return {'type': 'VDIAG', 'timestamp': ts, 'ts_unix': ts_unix,
+                'verify_count': int(m.group(1), 16),
+                'verify_bad_addr': hex_or_none(m.group(2)),
+                'verify_got': hex_or_none(m.group(3)),
+                'verify_exp': hex_or_none(m.group(4)),
                 'raw': line}
     return None
 
@@ -668,7 +688,7 @@ class DosimeterApp:
         ttk.Button(cf, text='↺', width=2, command=self._refresh_ports).pack(side='left', padx=2)
 
         ttk.Label(cf, text='Baud:').pack(side='left', padx=(8, 0))
-        self._baud_var = tk.StringVar(value='921600')
+        self._baud_var = tk.StringVar(value='115200')
         ttk.Entry(cf, textvariable=self._baud_var, width=7).pack(side='left', padx=2)
 
         ttk.Separator(cf, orient='vertical').pack(side='left', fill='y', padx=8)
@@ -1042,6 +1062,10 @@ class DosimeterApp:
             self._log_append('Board READY - configure settings and click Start', 'status')
             return
 
+        if record['type'] == 'BOOT':
+            self._log_append('Board BOOT banner received - waiting for READY', 'status')
+            return
+
         elif record['type'] == 'ADDRS_HDR':
             self._addr_remaining = record['count']
             self._addr_buf       = []
@@ -1069,11 +1093,23 @@ class DosimeterApp:
         elif record['type'] == 'DIAG':
             bad = record.get('first_bad_addr')
             bad_s = 'none' if bad is None else f'0x{bad:07X}'
+            awb = ""
+            if record.get('aw_count') is not None:
+                awb = (
+                    f" AW={record['aw_count']:,} W={record['w_count']:,} "
+                    f"B={record['b_count']:,}"
+                )
             self._log_append(
                 f"[DIAG] F1={record['fill1_count']:,} F2={record['fill2_count']:,} "
                 f"SC={record['scan_count']:,} BERR={record['bresp_errors']:,} "
-                f"RERR={record['rresp_errors']:,} BAD={bad_s} "
+                f"RERR={record['rresp_errors']:,}{awb} BAD={bad_s} "
                 f"OVF={int(record.get('addr_overflow', False))}", 'status')
+
+        elif record['type'] == 'VDIAG':
+            bad = record.get('verify_bad_addr')
+            bad_s = 'none' if bad is None else f'0x{bad:07X}'
+            self._log_append(
+                f"[VDIAG] VC={record['verify_count']:,} VBAD={bad_s}", 'status')
 
         elif record['type'] == 'FLIP':
             self._hang.reset(record['hold_s'])

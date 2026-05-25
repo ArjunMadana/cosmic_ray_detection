@@ -9,9 +9,9 @@ Uses the on-board DDR3 DRAM on an Arty S7-25 as a particle detector. The FPGA fi
 | Board | Digilent Arty S7-25 |
 | FPGA | Xilinx Spartan-7 XC7S25 |
 | Memory | DDR3 through MIG 7-series IP |
-| UART | 921600 8N1 over USB-JTAG FTDI |
+| UART | 115200 8N1 over USB-JTAG FTDI |
 | Tool | Vivado 2023.1 |
-| Firmware clock | `ui_clk_0 = 166.666667 MHz` |
+| Firmware timing clock | `UI_CLK_HZ = 150 MHz` |
 
 ## Quickstart
 
@@ -25,14 +25,20 @@ pip install -r tools/requirements.txt
 python tools/uart_logger.py
 ```
 
-Connect to the board COM port. The board sends `READY` after DDR3 calibration. Select hold, pattern, and refresh in the GUI, then click Start. The GUI sends `H`, `P`, `R`, then `G`; the firmware does not use physical switches or buttons for experiment control.
+Connect to the board COM port at `115200`. The board sends a low-level `BOOT` banner first, then `READY` after DDR3 calibration. Select hold, pattern, and refresh in the GUI, then click Start. The GUI sends `H`, `P`, `R`, then `G`; the firmware does not use physical switches or buttons for experiment control.
 
 If persistent flashing fails, check `flash_board.log`. The message `Failure to set flash parameters` occurs after MCS generation and points to the SPI flash programmer setup, not the bitstream build.
 
-For automated first-read diagnostics without the GUI:
+For an automated production sanity run without the GUI:
 
 ```bash
 python -B tools/run_diagnostics.py --port auto --hold 1 --refresh NORM --patterns FF,00,55,AA,FF --cycles 3
+```
+
+To sweep refresh selections:
+
+```bash
+python -B tools/run_diagnostics.py --port COM3 --baud 115200 --hold 1 --refresh OFF,SLOW,NORM,FAST --patterns FF,00,55,AA,FF --cycles 2
 ```
 
 To classify an existing capture:
@@ -64,6 +70,7 @@ Experiment control is UART-only:
 | `R<n>\n` | PC to board | Refresh: `0=OFF`, `1=SLOW`, `2=NORM`, `3=FAST` |
 | `G` | PC to board | Start cycling from `WAIT_GO` |
 | `X` | PC to board | Abort current cycle and return to `WAIT_GO` |
+| `BOOT` | Board to PC | UART boot banner before the detector FSM is released |
 | `READY` | Board to PC | Board is calibrated and waiting for `G` |
 | `INTERVAL:NNNNs` | Board to PC | Accepted hold setting |
 | `PATTERN:XX` | Board to PC | Accepted pattern setting |
@@ -71,28 +78,23 @@ Experiment control is UART-only:
 | `ADDRS:NNNN OVF:X` | Board to PC | Captured address count and overflow flag |
 | `HOLD:NNNNs PAT:XX FLIPS:XXXXXXXX` | Board to PC | Cycle result |
 | `TEMP:XXX` | Board to PC | Raw MIG XADC temperature code |
-| `DIAG:...` | Board to PC | Fill/scan coverage and first-mismatch diagnostics |
-
-`DIAG` format:
-
-```text
-DIAG:F1:XXXXXXXX F2:XXXXXXXX SC:XXXXXXXX BERR:XXXXXXXX RERR:XXXXXXXX BAD:XXXXXXX GOT:XXXXXXXX EXP:XXXXXXXX OVF:X
-```
 
 ## Firmware Flow
 
 ```text
-WAIT_GO -> FILL -> FILL2 -> HOLD -> SCAN -> ADDRS -> REPORT -> TEMP -> DIAG -> SETTLE -> FILL
+WAIT_GO -> FILL -> FILL2 -> HOLD -> SCAN -> ADDRS -> REPORT -> TEMP -> SETTLE -> FILL
 ```
 
-`FILL` and `FILL2` both write the full memory range. `SCAN` compares against the latched fill pattern, so `P<n>` commands issued mid-cycle affect the next fill/scan cycle, not the in-progress scan.
+`FILL` and `FILL2` both write the full memory range through a strict single-outstanding AXI sequencer: latch address/data, wait for AW, wait for W, wait for B, then advance. `SCAN` compares against the latched fill pattern, so `P<n>` commands issued mid-cycle affect the next fill/scan cycle, not the in-progress scan.
 
 ## Generated Vivado Patch
 
 `tools/expose_device_temp.tcl` is registered as the `synth_1` pre-synthesis hook. It patches generated BD/MIG Verilog so:
 
 - `device_temp_0[11:0]` reaches `cosmic_top`.
-- `ext_refresh_tick` reaches MIG `rank_common.refresh_tick`.
+- Diagnostic baseline: `ext_refresh_tick` is still plumbed through the generated hierarchy, but MIG `rank_common.refresh_tick` uses its internal `refresh_tick_lcl`.
+
+In this baseline build, `R<n>` commands are still accepted and logged, but they do not control MIG refresh. GUI-controlled MIG refresh remains deferred while the production data path and graphing interface are stabilized.
 
 Verify the hook in Vivado if the project moves:
 

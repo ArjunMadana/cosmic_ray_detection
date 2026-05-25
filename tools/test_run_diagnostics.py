@@ -6,7 +6,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from run_diagnostics import Cycle, classify_cycle, replay_jsonl
+from run_diagnostics import (
+    Cycle,
+    classify_cycle,
+    parse_diag_modes,
+    parse_line,
+    parse_refresh_modes,
+    replay_jsonl,
+)
 
 
 EXPECTED = 16
@@ -26,7 +33,7 @@ def flip(count=0, pattern="AA", addrs=None, overflow=False):
 
 
 def diag(fill1=EXPECTED, fill2=EXPECTED, scan=EXPECTED, berr=0, rerr=0,
-         bad=None, got=None, exp=None, overflow=False):
+         bad=None, got=None, exp=None, overflow=False, aw=None, w=None, b=None):
     return {
         "type": "DIAG",
         "fill1_count": fill1,
@@ -34,6 +41,9 @@ def diag(fill1=EXPECTED, fill2=EXPECTED, scan=EXPECTED, berr=0, rerr=0,
         "scan_count": scan,
         "bresp_errors": berr,
         "rresp_errors": rerr,
+        "aw_count": aw,
+        "w_count": w,
+        "b_count": b,
         "first_bad_addr": bad,
         "first_bad_got": got,
         "first_bad_exp": exp,
@@ -41,10 +51,54 @@ def diag(fill1=EXPECTED, fill2=EXPECTED, scan=EXPECTED, berr=0, rerr=0,
     }
 
 
+def vdiag(count=0, bad=None, got=None, exp=None):
+    return {
+        "type": "VDIAG",
+        "verify_count": count,
+        "verify_bad_addr": bad,
+        "verify_got": got,
+        "verify_exp": exp,
+    }
+
+
 class DiagnosticClassificationTests(unittest.TestCase):
+    def test_parse_diag_modes(self):
+        self.assertEqual(parse_diag_modes("normal,wait,dummy,verify"),
+                         ["NORMAL", "WAIT", "DUMMY", "VERIFY"])
+
+    def test_parse_refresh_modes(self):
+        self.assertEqual(parse_refresh_modes("off,norm"), ["OFF", "NORM"])
+
+    def test_parse_boot_banner(self):
+        record = parse_line("BOOT", 0)
+        self.assertEqual(record["type"], "BOOT")
+
+    def test_parse_vdiag(self):
+        record = parse_line("VDIAG:VC:00000002 VBAD:000000C VGOT:FFFFFFFF VEXP:00000000", 0)
+        self.assertEqual(record["type"], "VDIAG")
+        self.assertEqual(record["verify_count"], 2)
+        self.assertEqual(record["verify_bad_addr"], 0xC)
+        self.assertEqual(record["verify_got"], 0xFFFFFFFF)
+
+    def test_parse_diag_with_write_channel_counts(self):
+        record = parse_line(
+            "DIAG:F1:00000010 F2:00000010 SC:00000010 "
+            "BERR:00000000 RERR:00000000 AW:00000020 W:00000020 B:00000020 "
+            "BAD:XXXXXXX GOT:XXXXXXXX EXP:XXXXXXXX OVF:0",
+            0,
+        )
+        self.assertEqual(record["type"], "DIAG")
+        self.assertEqual(record["aw_count"], 32)
+        self.assertEqual(record["w_count"], 32)
+        self.assertEqual(record["b_count"], 32)
+
     def test_no_diag_is_symptom_only(self):
         cycle = Cycle(index=1, flip=flip(23, "FF"))
         self.assertIn("NO_DIAG", classify_cycle(cycle, EXPECTED))
+
+    def test_zero_flips_without_diag_is_clean_for_production_firmware(self):
+        cycle = Cycle(index=1, flip=flip(0, "FF"))
+        self.assertEqual(classify_cycle(cycle, EXPECTED), ["CLEAN"])
 
     def test_clean_cycle(self):
         cycle = Cycle(index=1, flip=flip(0, "AA"), diag=diag())
@@ -62,6 +116,12 @@ class DiagnosticClassificationTests(unittest.TestCase):
         tags = classify_cycle(cycle, EXPECTED)
         self.assertIn("AXI_WRITE_RESP", tags)
         self.assertIn("AXI_READ_RESP", tags)
+
+    def test_write_channel_faults_are_explicit(self):
+        cycle = Cycle(index=1, flip=flip(2, "AA"), diag=diag(aw=32, w=31, b=32))
+        tags = classify_cycle(cycle, EXPECTED)
+        self.assertIn("WRITE_W_COVERAGE", tags)
+        self.assertIn("WRITE_CHANNEL_IMBALANCE", tags)
 
     def test_previous_pattern_data_is_detected(self):
         cycle = Cycle(
@@ -91,6 +151,36 @@ class DiagnosticClassificationTests(unittest.TestCase):
         self.assertIn("ADDR_OVERFLOW", tags)
         self.assertIn("ADDR_STREAM_TRUNCATED", tags)
 
+    def test_address_stream_bad_first_is_detected(self):
+        cycle = Cycle(
+            index=1,
+            flip=flip(1, "AA"),
+            diag=diag(bad=0x20, got=0x55555555, exp=0xAAAAAAAA),
+            addr_header={"type": "ADDRS_HDR", "count": 1, "addr_overflow": False},
+            addrs=[0],
+        )
+        self.assertIn("ADDR_STREAM_BAD_FIRST", classify_cycle(cycle, EXPECTED))
+
+    def test_fill_verify_failed_is_detected(self):
+        cycle = Cycle(
+            index=1,
+            flip=flip(1, "00"),
+            diag=diag(bad=0x10, got=0xFFFFFFFF, exp=0),
+            vdiag=vdiag(count=1, bad=0x10, got=0xFFFFFFFF, exp=0),
+        )
+        tags = classify_cycle(cycle, EXPECTED, "FF")
+        self.assertIn("FILL_VERIFY_FAILED", tags)
+        self.assertIn("VERIFY_PREVIOUS_PATTERN", tags)
+
+    def test_hold_or_scan_failed_is_detected(self):
+        cycle = Cycle(
+            index=1,
+            flip=flip(1, "AA"),
+            diag=diag(bad=0x10, got=0x55555555, exp=0xAAAAAAAA),
+            vdiag=vdiag(count=0),
+        )
+        self.assertIn("HOLD_OR_SCAN_FAILED", classify_cycle(cycle, EXPECTED, "55"))
+
 
 class DiagnosticReplayTests(unittest.TestCase):
     def test_replay_without_diag_keeps_each_flip_as_a_cycle(self):
@@ -118,6 +208,19 @@ class DiagnosticReplayTests(unittest.TestCase):
             cycles = replay_jsonl(path)
         self.assertEqual(len(cycles), 1)
         self.assertEqual(cycles[0][0].addrs, [0, 4])
+
+    def test_replay_attaches_vdiag_after_diag(self):
+        rows = [
+            {"type": "FLIP", "hold_s": 1, "pattern": "00", "flip_count": 1},
+            diag(bad=0, got=0xFFFFFFFF, exp=0),
+            vdiag(count=1, bad=0, got=0xFFFFFFFF, exp=0),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "with_vdiag.jsonl"
+            path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+            cycles = replay_jsonl(path)
+        self.assertEqual(len(cycles), 1)
+        self.assertEqual(cycles[0][0].vdiag["verify_count"], 1)
 
 
 if __name__ == "__main__":

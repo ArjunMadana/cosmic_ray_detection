@@ -2,7 +2,8 @@
 Automated UART diagnostics for the DRAM dosimeter.
 
 Live mode programs a sequence of hold/pattern/refresh settings, records the
-board stream, and classifies each cycle from DIAG plus FLIP/ADDRS data.
+board stream, and classifies each cycle from FLIP/ADDRS data. Older DIAG and
+VDIAG records are still parsed for replaying hardware-debug captures.
 
 Replay mode classifies an existing JSONL capture without touching hardware:
     python tools/run_diagnostics.py --replay data/experiment_20260424_104838.jsonl
@@ -26,7 +27,7 @@ except ImportError:
     SERIAL_AVAILABLE = False
 
 
-BAUD = 921600
+BAUD = 115200
 EXPECTED_WORDS = 0x01000000
 CYCLE_TIMEOUT_S = 120.0
 DIAG_AFTER_FLIP_TIMEOUT_S = 12.0
@@ -39,6 +40,7 @@ PATTERN_WORD = {
     "AA": 0xAAAAAAAA,
 }
 REFRESH_TO_CMD = {"OFF": "0", "SLOW": "1", "NORM": "2", "FAST": "3"}
+DIAG_MODE_TO_CMD = {"NORMAL": "0", "WAIT": "1", "DUMMY": "2", "VERIFY": "3"}
 
 FLIP_RE = re.compile(r"HOLD:(\d+)s PAT:([0-9A-Fa-f]{2}) FLIPS:([0-9A-Fa-f]{8})")
 TEMP_RE = re.compile(r"TEMP:([0-9A-Fa-f]{3})")
@@ -46,12 +48,18 @@ REFRESH_RE = re.compile(r"REFRESH:(OFF|SLOW|NORM|FAST)")
 INTV_RE = re.compile(r"INTERVAL:(\d+)s")
 PATTERN_RE = re.compile(r"PATTERN:(FF|00|55|AA)")
 READY_RE = re.compile(r"^READY$")
+BOOT_RE = re.compile(r"^BOOT$")
 ADDRS_HDR_RE = re.compile(r"^ADDRS:([0-9A-Fa-f]{4})(?:\s+OVF:([01]))?$")
 ADDR_LINE_RE = re.compile(r"^([0-9A-Fa-f]{7})$")
 DIAG_RE = re.compile(
     r"DIAG:F1:([0-9A-Fa-f]{8}) F2:([0-9A-Fa-f]{8}) SC:([0-9A-Fa-f]{8}) "
-    r"BERR:([0-9A-Fa-f]{8}) RERR:([0-9A-Fa-f]{8}) BAD:([0-9A-Fa-fX]{7}) "
-    r"GOT:([0-9A-Fa-fX]{8}) EXP:([0-9A-Fa-fX]{8}) OVF:([01])"
+    r"BERR:([0-9A-Fa-f]{8}) RERR:([0-9A-Fa-f]{8})"
+    r"(?: AW:([0-9A-Fa-f]{8}) W:([0-9A-Fa-f]{8}) B:([0-9A-Fa-f]{8}))? "
+    r"BAD:([0-9A-Fa-fX]{7}) GOT:([0-9A-Fa-fX]{8}) EXP:([0-9A-Fa-fX]{8}) OVF:([01])"
+)
+VDIAG_RE = re.compile(
+    r"VDIAG:VC:([0-9A-Fa-f]{8}) VBAD:([0-9A-Fa-fX]{7}) "
+    r"VGOT:([0-9A-Fa-fX]{8}) VEXP:([0-9A-Fa-fX]{8})"
 )
 
 
@@ -110,6 +118,8 @@ def parse_line(line, ts_unix=None):
                 "pattern": m.group(1).upper(), "raw": line}
     if READY_RE.search(line):
         return {"type": "READY", "timestamp": ts, "ts_unix": ts_unix, "raw": line}
+    if BOOT_RE.search(line):
+        return {"type": "BOOT", "timestamp": ts, "ts_unix": ts_unix, "raw": line}
     m = ADDRS_HDR_RE.match(line)
     if m:
         return {
@@ -133,10 +143,27 @@ def parse_line(line, ts_unix=None):
             "scan_count": int(m.group(3), 16),
             "bresp_errors": int(m.group(4), 16),
             "rresp_errors": int(m.group(5), 16),
-            "first_bad_addr": hex_or_none(m.group(6)),
-            "first_bad_got": hex_or_none(m.group(7)),
-            "first_bad_exp": hex_or_none(m.group(8)),
-            "addr_overflow": m.group(9) == "1",
+            "aw_count": int(m.group(6), 16) if m.group(6) is not None else None,
+            "w_count": int(m.group(7), 16) if m.group(7) is not None else None,
+            "b_count": int(m.group(8), 16) if m.group(8) is not None else None,
+            "first_bad_addr": hex_or_none(m.group(9)),
+            "first_bad_got": hex_or_none(m.group(10)),
+            "first_bad_exp": hex_or_none(m.group(11)),
+            "addr_overflow": m.group(12) == "1",
+            "raw": line,
+        }
+    m = VDIAG_RE.search(line)
+    if m:
+        def hex_or_none(value):
+            return None if "X" in value.upper() else int(value, 16)
+        return {
+            "type": "VDIAG",
+            "timestamp": ts,
+            "ts_unix": ts_unix,
+            "verify_count": int(m.group(1), 16),
+            "verify_bad_addr": hex_or_none(m.group(2)),
+            "verify_got": hex_or_none(m.group(3)),
+            "verify_exp": hex_or_none(m.group(4)),
             "raw": line,
         }
     m = ADDR_LINE_RE.match(line)
@@ -151,9 +178,11 @@ class Cycle:
     index: int
     requested_pattern: str = ""
     requested_refresh: str = ""
+    requested_diag_mode: str = ""
     requested_hold_s: int = 0
     flip: dict | None = None
     diag: dict | None = None
+    vdiag: dict | None = None
     temp: dict | None = None
     addr_header: dict | None = None
     addrs: list[int] = field(default_factory=list)
@@ -182,13 +211,17 @@ def expected_pattern_word(pattern):
 def classify_cycle(cycle, expected_words=EXPECTED_WORDS, previous_pattern=None):
     tags = []
     diag = cycle.diag
+    vdiag = cycle.vdiag
     flip = cycle.flip or {}
     pattern = cycle.pattern()
     current_word = expected_pattern_word(pattern)
     previous_word = expected_pattern_word(previous_pattern)
 
     if diag is None:
-        tags.append("NO_DIAG")
+        if cycle.flip_count() == 0:
+            tags.append("CLEAN")
+        else:
+            tags.append("NO_DIAG")
     else:
         if diag["fill1_count"] != expected_words:
             tags.append("WRITE_COVERAGE_FILL1")
@@ -200,6 +233,23 @@ def classify_cycle(cycle, expected_words=EXPECTED_WORDS, previous_pattern=None):
             tags.append("AXI_WRITE_RESP")
         if diag["rresp_errors"]:
             tags.append("AXI_READ_RESP")
+        expected_write_words = expected_words * 2
+        aw_count = diag.get("aw_count")
+        w_count = diag.get("w_count")
+        b_count = diag.get("b_count")
+        if aw_count is not None and aw_count != expected_write_words:
+            tags.append("WRITE_AW_COVERAGE")
+        if w_count is not None and w_count != expected_write_words:
+            tags.append("WRITE_W_COVERAGE")
+        if b_count is not None and b_count != expected_write_words:
+            tags.append("WRITE_B_COVERAGE")
+        if (
+            aw_count is not None
+            and w_count is not None
+            and b_count is not None
+            and (aw_count != w_count or w_count != b_count)
+        ):
+            tags.append("WRITE_CHANNEL_IMBALANCE")
         if diag["first_bad_exp"] is not None and current_word is not None:
             if diag["first_bad_exp"] != current_word:
                 tags.append("EXPECTED_PATTERN_MISMATCH")
@@ -213,6 +263,23 @@ def classify_cycle(cycle, expected_words=EXPECTED_WORDS, previous_pattern=None):
         ):
             tags.append("PREVIOUS_PATTERN_DATA")
 
+    if vdiag is not None:
+        verify_count = vdiag.get("verify_count", 0)
+        if verify_count:
+            tags.append("FILL_VERIFY_FAILED")
+        if (
+            verify_count
+            and vdiag.get("verify_got") is not None
+            and previous_word is not None
+            and current_word is not None
+            and vdiag.get("verify_got") == previous_word
+            and vdiag.get("verify_exp") == current_word
+            and previous_word != current_word
+        ):
+            tags.append("VERIFY_PREVIOUS_PATTERN")
+        if verify_count == 0 and cycle.flip_count() > 0:
+            tags.append("HOLD_OR_SCAN_FAILED")
+
     if cycle.addr_overflow():
         tags.append("ADDR_OVERFLOW")
 
@@ -224,14 +291,25 @@ def classify_cycle(cycle, expected_words=EXPECTED_WORDS, previous_pattern=None):
         if flip.get("flip_count", 0) != addr_len and not cycle.addr_overflow():
             tags.append("ADDR_COUNT_MISMATCH")
 
+    if diag and diag.get("first_bad_addr") is not None and cycle.addrs:
+        if cycle.addrs[0] != diag["first_bad_addr"]:
+            tags.append("ADDR_STREAM_BAD_FIRST")
+
     hard_faults = {
         "WRITE_COVERAGE_FILL1",
         "WRITE_COVERAGE_FILL2",
         "READ_COVERAGE_SCAN",
         "AXI_WRITE_RESP",
         "AXI_READ_RESP",
+        "WRITE_AW_COVERAGE",
+        "WRITE_W_COVERAGE",
+        "WRITE_B_COVERAGE",
+        "WRITE_CHANNEL_IMBALANCE",
         "EXPECTED_PATTERN_MISMATCH",
         "PREVIOUS_PATTERN_DATA",
+        "FILL_VERIFY_FAILED",
+        "VERIFY_PREVIOUS_PATTERN",
+        "HOLD_OR_SCAN_FAILED",
     }
     if not tags and cycle.flip_count() == 0:
         tags.append("CLEAN")
@@ -266,11 +344,12 @@ class CycleAssembler:
         self.pending_addr_header = None
         self.pending_addrs = []
 
-    def start_cycle(self, pattern="", refresh="", hold_s=0):
+    def start_cycle(self, pattern="", refresh="", diag_mode="", hold_s=0):
         self.current = Cycle(
             index=len(self.cycles) + 1,
             requested_pattern=pattern,
             requested_refresh=refresh,
+            requested_diag_mode=diag_mode,
             requested_hold_s=hold_s,
         )
 
@@ -304,9 +383,18 @@ class CycleAssembler:
             self.current.temp = record
         elif rtype == "DIAG" and self.current is not None:
             self.current.diag = record
-            completed = self.current
-            self.cycles.append(self.current)
-            self.current = None
+            if self.current.requested_diag_mode != "VERIFY":
+                completed = self.current
+                self.cycles.append(self.current)
+                self.current = None
+        elif rtype == "VDIAG":
+            if self.current is not None:
+                self.current.vdiag = record
+                completed = self.current
+                self.cycles.append(self.current)
+                self.current = None
+            elif self.cycles and self.cycles[-1].vdiag is None:
+                self.cycles[-1].vdiag = record
         if self.current is not None and rtype not in ("ADDRS_HDR", "ADDR"):
             self.current.records.append(record)
         return completed
@@ -455,46 +543,76 @@ def run_live(args):
             if not ready:
                 print("WARNING: proceeding without READY because --force-start was set.")
 
-            previous_pattern = None
-            for pattern in args.patterns:
-                pattern = pattern.upper()
-                if pattern not in PATTERN_TO_CMD:
-                    raise SystemExit(f"Unsupported pattern {pattern}")
-                print(f"Running pattern {pattern}, refresh {args.refresh}, {args.cycles} cycle(s)")
-                write_serial(ser, f"H{args.hold}\n")
-                write_serial(ser, f"P{PATTERN_TO_CMD[pattern]}\n")
-                write_serial(ser, f"R{REFRESH_TO_CMD[args.refresh]}\n")
-                write_serial(ser, "G")
+            for diag_mode in args.diag_modes:
+                previous_pattern = None
+                for refresh in args.refresh:
+                    for pattern in args.patterns:
+                        pattern = pattern.upper()
+                        if pattern not in PATTERN_TO_CMD:
+                            raise SystemExit(f"Unsupported pattern {pattern}")
+                        print(
+                            f"Running mode {diag_mode}, pattern {pattern}, "
+                            f"refresh {refresh}, {args.cycles} cycle(s)"
+                        )
+                        write_serial(ser, f"H{args.hold}\n")
+                        write_serial(ser, f"P{PATTERN_TO_CMD[pattern]}\n")
+                        write_serial(ser, f"R{REFRESH_TO_CMD[refresh]}\n")
+                        write_serial(ser, "G")
 
-                cycles_for_pattern = 0
-                cycle_deadline = time.time() + args.cycle_timeout
-                assembler.start_cycle(pattern=pattern, refresh=args.refresh, hold_s=args.hold)
-                while cycles_for_pattern < args.cycles and time.time() < cycle_deadline:
-                    record = read_serial_record(ser)
-                    if record is None:
-                        if assembler.current and assembler.current.flip:
-                            age = time.time() - assembler.current.flip["ts_unix"]
-                            if age > args.diag_after_flip_timeout:
-                                assembler.flush_incomplete()
-                                completed = assembler.cycles[-1]
+                        cycles_for_pattern = 0
+                        cycle_deadline = time.time() + args.cycle_timeout
+                        assembler.start_cycle(
+                            pattern=pattern,
+                            refresh=refresh,
+                            diag_mode=diag_mode,
+                            hold_s=args.hold,
+                        )
+                        while cycles_for_pattern < args.cycles and time.time() < cycle_deadline:
+                            record = read_serial_record(ser)
+                            if record is None:
+                                if args.expect_diag and assembler.current and assembler.current.flip:
+                                    age = time.time() - assembler.current.flip["ts_unix"]
+                                    if age > args.diag_after_flip_timeout:
+                                        assembler.flush_incomplete()
+                                        completed = assembler.cycles[-1]
+                                        completed_cycles.append((completed, previous_pattern))
+                                        cycles_for_pattern += 1
+                                        if cycles_for_pattern < args.cycles:
+                                            assembler.start_cycle(
+                                                pattern=pattern,
+                                                refresh=refresh,
+                                                diag_mode=diag_mode,
+                                                hold_s=args.hold,
+                                            )
+                                continue
+                            writer.write_record(record)
+                            completed = assembler.ingest(record)
+                            if (
+                                not args.expect_diag
+                                and completed is None
+                                and record.get("type") == "TEMP"
+                                and assembler.current is not None
+                                and assembler.current.flip is not None
+                            ):
+                                completed = assembler.current
+                                assembler.cycles.append(completed)
+                                assembler.current = None
+                            if completed is not None:
                                 completed_cycles.append((completed, previous_pattern))
                                 cycles_for_pattern += 1
+                                previous_pattern = completed.pattern()
                                 if cycles_for_pattern < args.cycles:
-                                    assembler.start_cycle(pattern=pattern, refresh=args.refresh,
-                                                          hold_s=args.hold)
-                        continue
-                    writer.write_record(record)
-                    completed = assembler.ingest(record)
-                    if completed is not None:
-                        completed_cycles.append((completed, previous_pattern))
-                        cycles_for_pattern += 1
-                        previous_pattern = completed.pattern()
+                                    assembler.start_cycle(
+                                        pattern=pattern,
+                                        refresh=refresh,
+                                        diag_mode=diag_mode,
+                                        hold_s=args.hold,
+                                    )
+                                cycle_deadline = time.time() + args.cycle_timeout
                         if cycles_for_pattern < args.cycles:
-                            assembler.start_cycle(pattern=pattern, refresh=args.refresh,
-                                                  hold_s=args.hold)
-                        cycle_deadline = time.time() + args.cycle_timeout
-                if cycles_for_pattern < args.cycles:
-                    raise SystemExit(f"Timed out during pattern {pattern}.")
+                            raise SystemExit(
+                                f"Timed out during mode {diag_mode}, refresh {refresh}, pattern {pattern}."
+                            )
     finally:
         writer.close()
 
@@ -555,6 +673,7 @@ def hex_or_x(value, width):
 def cycle_row(cycle, previous_pattern, expected_words):
     tags = classify_cycle(cycle, expected_words, previous_pattern)
     diag = cycle.diag or {}
+    vdiag = cycle.vdiag or {}
     flip = cycle.flip or {}
     return {
         "cycle": cycle.index,
@@ -562,6 +681,7 @@ def cycle_row(cycle, previous_pattern, expected_words):
         "previous_pattern": previous_pattern or "",
         "hold_s": flip.get("hold_s", cycle.requested_hold_s),
         "refresh": cycle.requested_refresh,
+        "diag_mode": cycle.requested_diag_mode,
         "flip_count": cycle.flip_count(),
         "addr_count": len(cycle.addrs),
         "addr_overflow": cycle.addr_overflow(),
@@ -570,19 +690,28 @@ def cycle_row(cycle, previous_pattern, expected_words):
         "scan_count": diag.get("scan_count", ""),
         "bresp_errors": diag.get("bresp_errors", ""),
         "rresp_errors": diag.get("rresp_errors", ""),
+        "aw_count": diag.get("aw_count", ""),
+        "w_count": diag.get("w_count", ""),
+        "b_count": diag.get("b_count", ""),
         "first_bad_addr": hex_or_x(diag.get("first_bad_addr"), 7) if diag else "",
         "first_bad_got": hex_or_x(diag.get("first_bad_got"), 8) if diag else "",
         "first_bad_exp": hex_or_x(diag.get("first_bad_exp"), 8) if diag else "",
+        "verify_count": vdiag.get("verify_count", ""),
+        "verify_bad_addr": hex_or_x(vdiag.get("verify_bad_addr"), 7) if vdiag else "",
+        "verify_got": hex_or_x(vdiag.get("verify_got"), 8) if vdiag else "",
+        "verify_exp": hex_or_x(vdiag.get("verify_exp"), 8) if vdiag else "",
         "tags": ";".join(tags),
     }
 
 
 def write_summary_files(writer, cycles, expected_words):
     fieldnames = [
-        "cycle", "pattern", "previous_pattern", "hold_s", "refresh", "flip_count",
+        "cycle", "pattern", "previous_pattern", "hold_s", "refresh", "diag_mode", "flip_count",
         "addr_count", "addr_overflow", "fill1_count", "fill2_count", "scan_count",
-        "bresp_errors", "rresp_errors", "first_bad_addr", "first_bad_got",
-        "first_bad_exp", "tags",
+        "bresp_errors", "rresp_errors", "aw_count", "w_count", "b_count",
+        "first_bad_addr", "first_bad_got",
+        "first_bad_exp", "verify_count", "verify_bad_addr", "verify_got",
+        "verify_exp", "tags",
     ]
     rows = [cycle_row(cycle, prev, expected_words) for cycle, prev in cycles]
     with writer.csv_path.open("w", encoding="utf-8", newline="") as f:
@@ -618,13 +747,34 @@ def build_report(rows, expected_words):
     lines += ["", "## Interpretation", ""]
     hard = [
         "WRITE_COVERAGE_FILL1", "WRITE_COVERAGE_FILL2", "READ_COVERAGE_SCAN",
-        "AXI_WRITE_RESP", "AXI_READ_RESP", "EXPECTED_PATTERN_MISMATCH",
-        "PREVIOUS_PATTERN_DATA",
+        "AXI_WRITE_RESP", "AXI_READ_RESP", "WRITE_AW_COVERAGE",
+        "WRITE_W_COVERAGE", "WRITE_B_COVERAGE", "WRITE_CHANNEL_IMBALANCE",
+        "EXPECTED_PATTERN_MISMATCH",
+        "PREVIOUS_PATTERN_DATA", "FILL_VERIFY_FAILED", "VERIFY_PREVIOUS_PATTERN",
+        "HOLD_OR_SCAN_FAILED",
     ]
     if tag_counts.get("NO_DIAG"):
         lines.append(
             "At least one cycle has no DIAG record. This can confirm the symptom "
             "from old captures, but it cannot locate the failing stage."
+        )
+    elif tag_counts.get("FILL_VERIFY_FAILED"):
+        lines.append(
+            "VERIFY mode found bad data immediately after FILL2 and before HOLD. "
+            "Focus next on the write/fill path, especially write address/data ordering."
+        )
+        if any(tag_counts.get(tag) for tag in (
+            "WRITE_AW_COVERAGE", "WRITE_W_COVERAGE",
+            "WRITE_B_COVERAGE", "WRITE_CHANNEL_IMBALANCE",
+        )):
+            lines.append(
+                "The write-channel counters are not balanced or do not match the expected "
+                "two full fill passes, so the next focus is AXI write handshaking."
+            )
+    elif tag_counts.get("HOLD_OR_SCAN_FAILED"):
+        lines.append(
+            "VERIFY mode was clean before HOLD, but the measured scan still found data "
+            "mismatches. Focus next on hold, refresh, MIG refresh patching, or scan readback."
         )
     elif any(tag_counts.get(tag) for tag in hard):
         lines.append(
@@ -647,16 +797,18 @@ def build_report(rows, expected_words):
         "",
         "## Cycles",
         "",
-        "| Cycle | Pat | Prev | Flips | Addrs | F1 | F2 | SC | BERR | RERR | BAD | GOT | EXP | Tags |",
-        "|---:|:---:|:---:|---:|---:|---:|---:|---:|---:|---:|:---:|:---:|:---:|:---|",
+        "| Cycle | Mode | Pat | Prev | Flips | Addrs | F1 | F2 | SC | BERR | RERR | AW | W | B | BAD | GOT | EXP | VC | VBAD | VGOT | VEXP | Tags |",
+        "|---:|:---:|:---:|:---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|:---:|:---:|---:|:---:|:---:|:---:|:---|",
     ]
     for row in rows:
         lines.append(
-            f"| {row['cycle']} | {row['pattern']} | {row['previous_pattern']} | "
+            f"| {row['cycle']} | {row['diag_mode']} | {row['pattern']} | {row['previous_pattern']} | "
             f"{row['flip_count']} | {row['addr_count']} | {row['fill1_count']} | "
             f"{row['fill2_count']} | {row['scan_count']} | {row['bresp_errors']} | "
-            f"{row['rresp_errors']} | {row['first_bad_addr']} | {row['first_bad_got']} | "
-            f"{row['first_bad_exp']} | {row['tags']} |"
+            f"{row['rresp_errors']} | {row['aw_count']} | {row['w_count']} | "
+            f"{row['b_count']} | {row['first_bad_addr']} | "
+            f"{row['first_bad_got']} | {row['first_bad_exp']} | {row['verify_count']} | "
+            f"{row['verify_bad_addr']} | {row['verify_got']} | {row['verify_exp']} | {row['tags']} |"
         )
     lines.append("")
     return "\n".join(lines)
@@ -670,6 +822,22 @@ def parse_patterns(value):
     return patterns
 
 
+def parse_refresh_modes(value):
+    modes = [m.strip().upper() for m in value.split(",") if m.strip()]
+    bad = [m for m in modes if m not in REFRESH_TO_CMD]
+    if bad:
+        raise argparse.ArgumentTypeError(f"unsupported refresh mode(s): {','.join(bad)}")
+    return modes
+
+
+def parse_diag_modes(value):
+    modes = [m.strip().upper() for m in value.split(",") if m.strip()]
+    bad = [m for m in modes if m not in DIAG_MODE_TO_CMD]
+    if bad:
+        raise argparse.ArgumentTypeError(f"unsupported diagnostic mode(s): {','.join(bad)}")
+    return modes
+
+
 def build_argparser():
     parser = argparse.ArgumentParser(description="Run or replay DRAM diagnostic captures.")
     parser.add_argument("--replay", help="Existing JSONL file to classify instead of using serial.")
@@ -677,8 +845,13 @@ def build_argparser():
     parser.add_argument("--port", default="auto", help="Serial port, or auto.")
     parser.add_argument("--baud", type=int, default=BAUD)
     parser.add_argument("--hold", type=int, default=1)
-    parser.add_argument("--refresh", choices=sorted(REFRESH_TO_CMD), default="NORM")
+    parser.add_argument("--refresh", type=parse_refresh_modes, default=parse_refresh_modes("NORM"),
+                        help="Comma-separated refresh modes: OFF, SLOW, NORM, FAST.")
     parser.add_argument("--patterns", type=parse_patterns, default=parse_patterns("FF,00,55,AA,FF"))
+    parser.add_argument("--diag-modes", type=parse_diag_modes, default=parse_diag_modes("NORMAL"),
+                        help="Legacy diagnostic modes for older firmware captures.")
+    parser.add_argument("--expect-diag", action="store_true",
+                        help="Wait for DIAG/VDIAG records from older diagnostic firmware.")
     parser.add_argument("--cycles", type=int, default=3, help="Cycles per pattern in live mode.")
     parser.add_argument("--expected-words", type=lambda x: int(x, 0), default=EXPECTED_WORDS)
     parser.add_argument("--ready-timeout", type=float, default=30.0)
@@ -711,6 +884,10 @@ def main(argv=None):
         raise SystemExit("--cycles must be >= 1")
     if args.hold < 1:
         raise SystemExit("--hold must be >= 1")
+    if not args.refresh:
+        raise SystemExit("--refresh must include at least one mode")
+    if not args.diag_modes:
+        raise SystemExit("--diag-modes must include at least one mode")
     if args.scan_baud:
         baud_scan(args)
     elif args.probe:

@@ -1,16 +1,19 @@
 # Feature Roadmap
 
-Last updated: 2026-05-24
+Last updated: 2026-05-25
 
 ## Current Baseline
 
 - UI-only experiment control over UART.
 - GUI controls hold, pattern, refresh, start, and reset.
-- Firmware clock source is `ui_clk_0 = 166.666667 MHz`.
-- UART runs at `921600` baud.
+- Firmware timing uses `UI_CLK_HZ = 150 MHz`.
+- UART runs at `115200` baud while hardware UART bring-up is being isolated.
+- A `BOOT` banner is emitted before the detector FSM is released, so UART pin/framing can be separated from detector/MIG behavior.
 - Address streaming captures up to 4096 addresses and reports overflow.
 - Replay uses the same analysis path as live data.
-- Cycle diagnostics are emitted and persisted for first-read investigation.
+- The first-read/pattern-change bug is fixed by strict single-outstanding AXI writes.
+- Temporary diagnostic hardware modes were removed from the production FSM.
+- Current baseline leaves MIG on internal refresh; `R<n>` is accepted/logged but not applied to MIG until refresh-control restoration is revisited.
 
 ## Implemented Features
 
@@ -18,7 +21,7 @@ Last updated: 2026-05-24
 
 Commands: `H`, `P`, `R`, `G`, `X`.
 
-Board acknowledgements and telemetry: `READY`, `INTERVAL`, `PATTERN`, `REFRESH`, `ADDRS`, `HOLD`, `TEMP`, `DIAG`.
+Board acknowledgements and telemetry: `READY`, `INTERVAL`, `PATTERN`, `REFRESH`, `ADDRS`, `HOLD`, `TEMP`.
 
 ### GUI
 
@@ -27,10 +30,6 @@ Board acknowledgements and telemetry: `READY`, `INTERVAL`, `PATTERN`, `REFRESH`,
 - Reset Board is enabled immediately after serial connection.
 - Start remains disabled until `READY`.
 - Replay redraws raw, denoised, and raster tabs.
-
-### Diagnostics
-
-The first-read/pattern-change spike is not hidden as warmup. Firmware emits FILL1, FILL2, SCAN, AXI error, first mismatch, and address-overflow data every cycle.
 
 ### Tooling
 
@@ -41,13 +40,13 @@ The first-read/pattern-change spike is not hidden as warmup. Firmware emits FILL
 
 ## Next Hardware Work
 
-1. Build bitstream and confirm the generated BD hook patches `ext_refresh_tick`.
+1. Build bitstream with the production FSM cleanup.
 2. Run hardware acceptance:
    - Connect to an already-powered board.
    - Use Reset Board to recover `READY`.
    - Start with chosen hold/pattern/refresh and confirm first-cycle settings.
-   - Change pattern during operation and inspect `DIAG`.
-   - Sweep refresh modes and confirm measurable flip-count changes.
+   - Change pattern during operation and confirm `FLIPS:00000000` remains stable.
+   - Run a short refresh sweep once normal operation is clean.
 
 ## Completed Validation
 
@@ -58,6 +57,5 @@ The first-read/pattern-change spike is not hidden as warmup. Firmware emits FILL
 
 ## Future Ideas
 
-- Add a GUI diagnostics tab for `DIAG` records.
 - Add hardware-side build-time version reporting.
 - Add an automated Vivado batch simulation target for `detector_fsm_tb`.

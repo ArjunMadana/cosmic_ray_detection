@@ -4,12 +4,12 @@
 // Description: Standard UART receiver.  Matches uart_tx parameters.
 //              Outputs a 1-cycle valid pulse with the received byte.
 //              CLK_FREQ must be set to the actual clock driving this module
-//              (166_666_667 for ui_clk on this project).
+//              (150_000_000 for ui_clk on this project).
 //////////////////////////////////////////////////////////////////////////////////
 
 module uart_rx #(
-    parameter CLK_FREQ  = 166_666_667,
-    parameter BAUD_RATE = 921_600
+    parameter CLK_FREQ  = 150_000_000,
+    parameter BAUD_RATE = 115_200
 )(
     input  wire       clk,
     input  wire       rst,

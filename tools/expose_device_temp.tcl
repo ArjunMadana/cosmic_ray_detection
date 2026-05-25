@@ -3,9 +3,14 @@
 # Vivado pre-synthesis hook for generated files under cosmic_bd.
 #
 # Patches generated Verilog after block-design generation so the top-level
-# design can use two MIG-internal signals that are not exposed by the BD:
+# design can use MIG-internal signals that are not exposed by the BD:
 #   device_temp_0[11:0]  - MIG XADC die temperature output
-#   ext_refresh_tick     - GUI/UART-controlled refresh tick into MIG rank_common
+#
+# Baseline mode, 2026-05-25:
+#   ext_refresh_tick is still plumbed through the generated hierarchy so
+#   cosmic_top does not need a structural change, but rank_common uses MIG's
+#   internal refresh_tick_lcl. This isolates the write/verify bug from the
+#   custom refresh override.
 #
 # This file keeps the historical name because cosmic_ray_detection.xpr already
 # points its synth_1 pre-hook at tools/expose_device_temp.tcl.
@@ -56,6 +61,21 @@ proc replace_once_if_missing {var_name guard old new label} {
         return
     }
     replace_once txt $old $new $label
+}
+
+proc force_replace {var_name old new label} {
+    upvar $var_name txt
+    set pos [string first $old $txt]
+    if {$pos < 0} {
+        if {[string first $new $txt] >= 0} {
+            puts "  $label already set."
+        } else {
+            puts "WARNING: Could not find patch anchor for $label."
+        }
+        return
+    }
+    set txt [string replace $txt $pos [expr {$pos + [string length $old] - 1}] $new]
+    puts "  Patched $label."
 }
 
 proc patch_file {path script_body} {
@@ -206,11 +226,11 @@ patch_file $rank_common {
     replace_once txt "  input rst;" \
         "  input rst;\n  input ext_refresh_tick;" \
         "rank_common ext_refresh_tick input"
-    replace_once txt "  assign refresh_tick = refresh_tick_lcl;" \
-        "  assign refresh_tick = ext_refresh_tick;" \
-        "rank_common external refresh source"
+    force_replace txt "  assign refresh_tick = ext_refresh_tick;" \
+        "  assign refresh_tick = refresh_tick_lcl;" \
+        "rank_common internal refresh baseline"
 }
 
 puts ""
-puts "Done. Generated BD exposes device_temp_0[11:0] and ext_refresh_tick."
-puts "The ext_refresh_tick signal now drives MIG rank_common refresh_tick."
+puts "Done. Generated BD exposes device_temp_0[11:0]."
+puts "Baseline mode: ext_refresh_tick is plumbed but MIG rank_common uses refresh_tick_lcl."

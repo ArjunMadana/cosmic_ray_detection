@@ -42,6 +42,7 @@ module detector_fsm_tb;
     reg        aw_seen = 0;
     reg        w_seen = 0;
     reg        stall_mode = 0;
+    reg [1:0]  write_order_mode = 0;
     integer i;
 
     detector_fsm #(
@@ -100,8 +101,20 @@ module detector_fsm_tb;
             for (i = 0; i < MEM_WORDS; i = i + 1)
                 mem[i] <= 32'hCAFE0000 + i;
         end else begin
-            awready <= ready_now(1'b0);
-            wready  <= ready_now(1'b0);
+            case (write_order_mode)
+                2'd1: begin
+                    awready <= w_seen && ready_now(1'b0);
+                    wready  <= ready_now(1'b0);
+                end
+                2'd2: begin
+                    awready <= ready_now(1'b0);
+                    wready  <= aw_seen && ready_now(1'b0);
+                end
+                default: begin
+                    awready <= ready_now(1'b0);
+                    wready  <= ready_now(1'b0);
+                end
+            endcase
             arready <= ready_now(1'b0) && !rvalid;
 
             if (awvalid && awready) begin
@@ -156,40 +169,48 @@ module detector_fsm_tb;
         end
     endtask
 
-    task wait_diag_and_check;
+    function [31:0] pattern_word;
+        input [1:0] expected_pattern;
+        begin
+            case (expected_pattern)
+                2'd0: pattern_word = 32'hFFFFFFFF;
+                2'd1: pattern_word = 32'h00000000;
+                2'd2: pattern_word = 32'h55555555;
+                default: pattern_word = 32'hAAAAAAAA;
+            endcase
+        end
+    endfunction
+
+    task wait_cycle_and_check;
         input [1:0] expected_pattern;
         integer timeout;
+        integer j;
+        reg [31:0] expected_word;
         begin
             timeout = 0;
+            while (dut.state == 5'd9 && timeout < 20000) begin
+                @(posedge clk);
+                timeout = timeout + 1;
+            end
             while (dut.state != 5'd9 && timeout < 20000) begin
                 @(posedge clk);
                 timeout = timeout + 1;
             end
             if (timeout >= 20000) begin
-                $display("TIMEOUT waiting for DIAG");
+                $display("TIMEOUT waiting for cycle SETTLE");
                 $finish;
             end
             #1;
-            if (dut.fill1_resp_count != MEM_WORDS) begin
-                $display("FAIL fill1 count: got %0d expected %0d", dut.fill1_resp_count, MEM_WORDS);
+            if (dut.hit_counter != 0) begin
+                $display("FAIL mismatch count: got %0d", dut.hit_counter);
                 $finish;
             end
-            if (dut.fill2_resp_count != MEM_WORDS) begin
-                $display("FAIL fill2 count: got %0d expected %0d", dut.fill2_resp_count, MEM_WORDS);
-                $finish;
-            end
-            if (dut.scan_resp_count != MEM_WORDS) begin
-                $display("FAIL scan count: got %0d expected %0d", dut.scan_resp_count, MEM_WORDS);
-                $finish;
-            end
-            if (dut.first_bad_valid) begin
-                $display("FAIL mismatch BAD=%h GOT=%h EXP=%h",
-                         dut.first_bad_addr, dut.first_bad_got, dut.first_bad_exp);
-                $finish;
-            end
-            if (dut.fill_pattern_sel != expected_pattern) begin
-                $display("FAIL pattern: got %0d expected %0d", dut.fill_pattern_sel, expected_pattern);
-                $finish;
+            expected_word = pattern_word(expected_pattern);
+            for (j = 0; j < MEM_WORDS; j = j + 1) begin
+                if (mem[j] !== expected_word) begin
+                    $display("FAIL memory[%0d]: got %h expected %h", j, mem[j], expected_word);
+                    $finish;
+                end
             end
             @(posedge clk);
         end
@@ -204,13 +225,19 @@ module detector_fsm_tb;
         start_cycle();
 
         stall_mode <= 0;
-        wait_diag_and_check(2'd0);
+        write_order_mode <= 0;
+        wait_cycle_and_check(2'd0);
 
         stall_mode <= 1;
-        wait (dut.state == 5'd5);
+        write_order_mode <= 1;
+        wait (dut.state == 5'd4);
         send_pattern("3");
-        wait_diag_and_check(2'd0);
-        wait_diag_and_check(2'd3);
+        wait_cycle_and_check(2'd0);
+        write_order_mode <= 2;
+        wait (dut.state == 5'd4);
+        send_pattern("1");
+        wait_cycle_and_check(2'd3);
+        wait_cycle_and_check(2'd1);
 
         $display("detector_fsm_tb PASS");
         $finish;

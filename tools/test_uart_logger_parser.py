@@ -18,6 +18,10 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(record["type"], "REFRESH")
         self.assertEqual(record["refresh_rate"], "NORM")
 
+    def test_boot_record(self):
+        record = parse_line(b"BOOT\r\n", TS)
+        self.assertEqual(record["type"], "BOOT")
+
     def test_addrs_header_with_overflow(self):
         record = parse_line(b"ADDRS:1000 OVF:1\r\n", TS)
         self.assertEqual(record["type"], "ADDRS_HDR")
@@ -39,6 +43,29 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(record["first_bad_addr"], 0xC)
         self.assertEqual(record["first_bad_got"], 0xDEADBEEF)
         self.assertTrue(record["addr_overflow"])
+
+    def test_diag_record_with_write_channel_counts(self):
+        record = parse_line(
+            b"DIAG:F1:00000010 F2:00000010 SC:00000010 "
+            b"BERR:00000000 RERR:00000001 AW:00000020 W:00000020 B:00000020 "
+            b"BAD:000000C GOT:DEADBEEF EXP:AAAAAAAA OVF:1\r\n",
+            TS,
+        )
+        self.assertEqual(record["type"], "DIAG")
+        self.assertEqual(record["aw_count"], 32)
+        self.assertEqual(record["w_count"], 32)
+        self.assertEqual(record["b_count"], 32)
+
+    def test_vdiag_record(self):
+        record = parse_line(
+            b"VDIAG:VC:00000002 VBAD:000000C VGOT:DEADBEEF VEXP:AAAAAAAA\r\n",
+            TS,
+        )
+        self.assertEqual(record["type"], "VDIAG")
+        self.assertEqual(record["verify_count"], 2)
+        self.assertEqual(record["verify_bad_addr"], 0xC)
+        self.assertEqual(record["verify_got"], 0xDEADBEEF)
+        self.assertEqual(record["verify_exp"], 0xAAAAAAAA)
 
     def test_hold_flip_record(self):
         record = parse_line(b"HOLD:0005s PAT:AA FLIPS:00000002\r\n", TS)

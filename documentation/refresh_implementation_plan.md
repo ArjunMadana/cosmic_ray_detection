@@ -1,8 +1,10 @@
 # Refresh Implementation Plan
 
-Last updated: 2026-05-24
+Last updated: 2026-05-25
 
 Refresh control is implemented through the GUI and UART only. The old physical-control plan is obsolete.
+
+Current production baseline: the generated-BD patch leaves MIG on its internal refresh generator. `R<n>` commands are accepted and logged, but they do not control MIG refresh until refresh-control restoration is revisited.
 
 ## Firmware
 
@@ -24,11 +26,11 @@ REFRESH:NORM
 REFRESH:FAST
 ```
 
-`UI_CLK_HZ` is `166_666_667`.
+`UI_CLK_HZ` is `150_000_000`.
 
 ## Generated BD/MIG Patch
 
-`tools/expose_device_temp.tcl` patches the generated hierarchy so `refresh_tick_out` reaches MIG:
+`tools/expose_device_temp.tcl` currently patches the generated hierarchy so `device_temp_0` reaches `cosmic_top` and `ext_refresh_tick` remains plumbed for structural compatibility:
 
 ```text
 detector_fsm.refresh_tick_out
@@ -44,11 +46,13 @@ mig_7series_v4_2_rank_mach.ext_refresh_tick
 mig_7series_v4_2_rank_common.ext_refresh_tick
 ```
 
-The patched `rank_common` assignment is:
+The baseline `rank_common` assignment is:
 
 ```verilog
-assign refresh_tick = ext_refresh_tick;
+assign refresh_tick = refresh_tick_lcl;
 ```
+
+This deliberately disables GUI-controlled MIG refresh for the production cleanup baseline. The write-correctness bug is fixed; restore refresh control only after designing a safer approach that does not interfere with active traffic.
 
 ## GUI
 
@@ -61,10 +65,16 @@ R<n>\n
 G
 ```
 
+The runner accepts comma-separated refresh sweeps, for example:
+
+```bash
+python -B tools/run_diagnostics.py --port COM3 --baud 115200 --hold 1 --refresh OFF,SLOW,NORM,FAST --patterns FF,00,55,AA,FF --cycles 2
+```
+
 Replay tracks `REFRESH` records and redraws the raw, denoised, and raster tabs with the same pipeline as live data.
 
 ## Validation
 
 - Use the Python parser test for `REFRESH`.
 - Run `detector_fsm_tb.v` in Vivado/xsim.
-- On hardware, compare flip counts across `OFF`, `SLOW`, `NORM`, and `FAST`.
+- On hardware, run the production sanity sequence at `NORM`, then a short refresh-selector sweep. In this baseline the selector is logged but MIG still uses its internal refresh timer.
