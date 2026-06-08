@@ -12,6 +12,7 @@ import csv
 import json
 import queue
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -121,6 +122,119 @@ class SerialReader(threading.Thread):
         self.stop.set()
         if self._ser and self._ser.is_open:
             self._ser.close()
+
+
+class JtagReader:
+    """GUI transport that runs the Vivado/JTAG fallback capture on Start."""
+
+    def __init__(self, q, stop_event):
+        self.q = q
+        self.stop = stop_event
+        self.hold_s = 5
+        self.pattern = 'FF'
+        self._pending = None
+        self._acc = ''
+        self._proc = None
+        self._thread = None
+        self._lock = threading.Lock()
+        self._root = Path(__file__).resolve().parents[1]
+
+    def start(self):
+        self.q.put(('STATUS', 'JTAG transport ready - click Start to run Vivado capture'))
+        self.q.put(('DATA', (time.time(), b'READY\n')))
+
+    def write(self, data: bytes) -> bool:
+        try:
+            text = data.decode('ascii', errors='ignore')
+        except Exception:
+            return False
+        for ch in text:
+            if ch == 'G':
+                self._start_capture()
+            elif ch == 'X':
+                self._stop_capture()
+                self.q.put(('DATA', (time.time(), b'READY\n')))
+            elif ch == 'H':
+                self._pending = 'H'
+                self._acc = ''
+            elif ch == 'P':
+                self._pending = 'P'
+                self._acc = ''
+            elif ch.isdigit() and getattr(self, '_pending', None):
+                self._acc = getattr(self, '_acc', '') + ch
+                if self._pending == 'P':
+                    self._set_pattern(self._acc)
+                    self._pending = None
+            elif ch == '\n':
+                pending = getattr(self, '_pending', None)
+                acc = getattr(self, '_acc', '')
+                if pending == 'H' and acc:
+                    self.hold_s = max(1, min(9999, int(acc)))
+                elif pending == 'P':
+                    self._set_pattern(acc)
+                self._pending = None
+        return True
+
+    def _set_pattern(self, value):
+        self.pattern = {'0': 'FF', '1': '00', '2': '55', '3': 'AA'}.get(value, self.pattern)
+
+    def _start_capture(self):
+        with self._lock:
+            if self._thread and self._thread.is_alive():
+                self.q.put(('STATUS', 'JTAG capture is already running'))
+                return
+            self.stop.clear()
+            self._thread = threading.Thread(target=self._run_capture, daemon=True)
+            self._thread.start()
+
+    def _run_capture(self):
+        cmd = [
+            str(self._root / 'run_jtag_diagnostics.bat'),
+            str(self.hold_s),
+            self.pattern,
+            '100000',
+            'PROGRAM',
+        ]
+        self.q.put(('STATUS', f'JTAG capture starting: hold={self.hold_s}s pattern={self.pattern}'))
+        try:
+            self._proc = subprocess.Popen(
+                cmd,
+                cwd=str(self._root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                bufsize=1,
+            )
+            for line in self._proc.stdout:
+                if self.stop.is_set():
+                    break
+                clean = line.strip()
+                if not clean:
+                    continue
+                if clean.startswith(('INFO:', 'WARNING:', 'ERROR:', '#', '******', '****', '** ')):
+                    self.q.put(('STATUS', clean))
+                    continue
+                self.q.put(('DATA', (time.time(), (clean + '\n').encode('ascii', errors='ignore'))))
+            if self.stop.is_set() and self._proc.poll() is None:
+                self._proc.terminate()
+            rc = self._proc.wait(timeout=5)
+            self.q.put(('STATUS', f'JTAG capture exited with code {rc}'))
+        except Exception as e:
+            self.q.put(('STATUS', f'JTAG capture error: {e}'))
+        finally:
+            self._proc = None
+
+    def _stop_capture(self):
+        self.stop.set()
+        proc = self._proc
+        if proc and proc.poll() is None:
+            proc.terminate()
+
+    def close(self):
+        self._stop_capture()
 
 # ---------------------------------------------------------------------------
 # Message parser
@@ -955,9 +1069,13 @@ class DosimeterApp:
     # -----------------------------------------------------------------------
 
     def _refresh_ports(self):
+        ports = ['JTAG']
         if not SERIAL_AVAILABLE:
+            self._port_cb['values'] = ports
+            if not self._port_var.get():
+                self._port_var.set('JTAG')
             return
-        ports = [p.device for p in serial.tools.list_ports.comports()]
+        ports.extend(p.device for p in serial.tools.list_ports.comports())
         self._port_cb['values'] = ports
         arty = find_arty_port()
         if arty:
@@ -1036,6 +1154,24 @@ class DosimeterApp:
     # -----------------------------------------------------------------------
 
     def _connect(self):
+        port = self._port_var.get().strip()
+        if port.upper() == 'JTAG':
+            self._board_ready = True
+            self._running     = False
+            self._stop  = threading.Event()
+            self._q     = queue.Queue()
+            self._reader = JtagReader(self._q, self._stop)
+            self._reader.start()
+            self._connected = True
+            self._conn_btn.config( state='disabled')
+            self._disc_btn.config( state='normal')
+            self._start_btn.config(state='normal')
+            self._reset_btn.config(state='normal')
+            self._log_append(
+                'Connected through JTAG fallback - Start runs Vivado capture',
+                'status')
+            return
+
         if not SERIAL_AVAILABLE:
             messagebox.showerror('Missing dependency',
                                  'pyserial is not installed.\nRun: pip install pyserial')
@@ -1105,6 +1241,7 @@ class DosimeterApp:
 
     def _reset_board(self):
         """Send X to abort the current cycle and return board to WAIT_GO."""
+        jtag_transport = isinstance(self._reader, JtagReader)
         if self._reader:
             self._reader.write(b'X')
         if self._store:
@@ -1113,11 +1250,14 @@ class DosimeterApp:
             self._log_append(self._store.summary(), 'status')
             self._store = None
         self._running     = False
-        self._board_ready = False
+        self._board_ready = jtag_transport
         self._clear_address_capture()
-        self._start_btn.config(state='disabled')
+        self._start_btn.config(state='normal' if jtag_transport and self._connected else 'disabled')
         self._reset_btn.config(state='normal' if self._connected else 'disabled')
-        self._log_append('Waiting for READY…', 'status')
+        if jtag_transport:
+            self._log_append('JTAG capture stopped - board can be started again', 'status')
+        else:
+            self._log_append('Waiting for READY…', 'status')
 
     def _open_sweep(self):
         if self._sweep_win is None or not self._sweep_win.winfo_exists():

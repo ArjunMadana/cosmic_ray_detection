@@ -52,6 +52,8 @@
     
     // Internal wires
     wire        ui_clk;
+    wire        jtag_clk;
+    wire        jtag_cfgmclk;
     wire        calib_complete;
     wire [11:0] device_temp;
     wire        refresh_tick_out;
@@ -81,6 +83,10 @@
     wire        uart_ready;
     wire [7:0]  rx_data;
     wire        rx_valid;
+    wire [7:0]  fsm_rx_data;
+    wire        fsm_rx_valid;
+    wire [7:0]  jtag_rx_data;
+    wire        jtag_rx_valid;
     
     wire reset;
     assign reset = 1'b0;
@@ -102,6 +108,27 @@
             boot_rst_count <= boot_rst_count + 1'b1;
         end
     end
+
+    STARTUPE2 #(
+        .PROG_USR("FALSE"),
+        .SIM_CCLK_FREQ(0.0)
+    ) u_jtag_startupe2 (
+        .CFGCLK(),
+        .CFGMCLK(jtag_cfgmclk),
+        .EOS(),
+        .PREQ(),
+        .CLK(1'b0),
+        .GSR(1'b0),
+        .GTS(1'b0),
+        .KEYCLEARB(1'b1),
+        .PACK(1'b0),
+        .USRCCLKO(1'b0),
+        .USRCCLKTS(1'b1),
+        .USRDONEO(1'b1),
+        .USRDONETS(1'b1)
+    );
+
+    assign jtag_clk = jtag_cfgmclk;
     
     // Block design instance
     cosmic_bd_wrapper u_bd (
@@ -179,8 +206,8 @@
         .uart_data      (uart_data),
         .uart_valid     (uart_valid),
         .uart_ready     (uart_ready),
-        .rx_data        (rx_data),
-        .rx_valid       (rx_valid),
+        .rx_data        (fsm_rx_data),
+        .rx_valid       (fsm_rx_valid),
         .led0           (led0),
         .led1           (led1),
         .temp_raw       (device_temp)
@@ -191,6 +218,9 @@
     wire        boot_uart_ready;
     wire        boot_uart_txd;
     wire        fsm_uart_txd;
+    wire        uart_txd_int;
+    reg  [7:0]  jtag_tx_data = 8'd0;
+    reg         jtag_tx_valid = 1'b0;
 
     uart_boot_banner u_boot_banner (
         .clk        (ui_clk),
@@ -214,7 +244,40 @@
         .tx    (boot_uart_txd)
     );
 
-    assign uart_txd = boot_active ? boot_uart_txd : fsm_uart_txd;
+    assign uart_txd_int = boot_active ? boot_uart_txd : fsm_uart_txd;
+    assign uart_txd = uart_txd_int;
+    assign fsm_rx_data = jtag_rx_valid ? jtag_rx_data : rx_data;
+    assign fsm_rx_valid = jtag_rx_valid | rx_valid;
+
+    // Capture exactly the bytes accepted by the UART TX path, then forward
+    // them to the JTAG mailbox on the following clock.
+    always @(posedge ui_clk) begin
+        if (boot_rst) begin
+            jtag_tx_data  <= 8'd0;
+            jtag_tx_valid <= 1'b0;
+        end else begin
+            jtag_tx_valid <= 1'b0;
+            if (boot_active) begin
+                if (boot_uart_valid && boot_uart_ready) begin
+                    jtag_tx_data  <= boot_uart_data;
+                    jtag_tx_valid <= 1'b1;
+                end
+            end else if (uart_valid && uart_ready) begin
+                jtag_tx_data  <= uart_data;
+                jtag_tx_valid <= 1'b1;
+            end
+        end
+    end
+
+    jtag_vio_mailbox u_jtag_mailbox (
+        .clk       (ui_clk),
+        .vio_clk   (jtag_clk),
+        .rst       (boot_rst),
+        .tx_data   (jtag_tx_data),
+        .tx_valid  (jtag_tx_valid),
+        .rx_data   (jtag_rx_data),
+        .rx_valid  (jtag_rx_valid)
+    );
 
     // UART TX
     uart_tx #(

@@ -1,4 +1,3 @@
 @echo off
 cd /d "%~dp0"
-vivado -mode batch -source tools/program_board.tcl
-pause
+"C:\Xilinx\Vivado\2023.1\bin\vivado.bat" -mode batch -source tools/program_board.tcl

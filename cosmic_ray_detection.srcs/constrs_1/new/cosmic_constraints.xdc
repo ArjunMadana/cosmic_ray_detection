@@ -21,6 +21,11 @@ set_property PACKAGE_PIN V12 [get_ports uart_rxd]
 set_property IOSTANDARD LVCMOS33 [get_ports uart_rxd]
 set_property PULLUP true [get_ports uart_rxd]
 
+set cfgmclk_pin [get_pins -quiet u_jtag_startupe2/CFGMCLK]
+if {[llength $cfgmclk_pin] != 0} {
+    create_clock -name jtag_cfgmclk -period 15.385 $cfgmclk_pin
+}
+
 set_property INTERNAL_VREF 0.675 [get_iobanks 34]
 set_property CLOCK_DEDICATED_ROUTE FALSE [get_nets u_bd/cosmic_bd_i/clk_wiz_0/inst/clk_in1_cosmic_bd_clk_wiz_0_0]
 

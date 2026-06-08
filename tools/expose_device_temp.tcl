@@ -94,7 +94,8 @@ if {[catch {ensure_project_open}]} {
     return
 }
 
-set proj_dir [get_property DIRECTORY [current_project]]
+set script_dir [file dirname [file normalize [info script]]]
+set proj_dir [file normalize [file dirname $script_dir]]
 set bd_root  [file normalize "$proj_dir/cosmic_ray_detection.gen/sources_1/bd/cosmic_bd"]
 set synth_v  "$bd_root/synth/cosmic_bd.v"
 set wrapper  "$bd_root/hdl/cosmic_bd_wrapper.v"
@@ -109,55 +110,55 @@ set rank_mach   "$mig_root/controller/mig_7series_v4_2_rank_mach.v"
 set rank_common "$mig_root/controller/mig_7series_v4_2_rank_common.v"
 
 patch_file $synth_v {
-    replace_once txt "    init_calib_complete_0," \
+    replace_once_if_missing txt "    device_temp_0," "    init_calib_complete_0," \
         "    device_temp_0,\n    init_calib_complete_0," \
         "cosmic_bd device_temp_0 port"
-    replace_once txt "  output init_calib_complete_0;" \
+    replace_once_if_missing txt "  output [11:0]device_temp_0;" "  output init_calib_complete_0;" \
         "  output [11:0]device_temp_0;\n  output init_calib_complete_0;" \
         "cosmic_bd device_temp_0 declaration"
-    replace_once txt "  wire mig_7series_0_init_calib_complete;" \
+    replace_once_if_missing txt "  wire [11:0]mig_7series_0_device_temp;" "  wire mig_7series_0_init_calib_complete;" \
         "  wire [11:0]mig_7series_0_device_temp;\n  wire mig_7series_0_init_calib_complete;" \
         "cosmic_bd device_temp wire"
-    replace_once txt "  assign init_calib_complete_0 = mig_7series_0_init_calib_complete;" \
+    replace_once_if_missing txt "  assign device_temp_0 = mig_7series_0_device_temp;" "  assign init_calib_complete_0 = mig_7series_0_init_calib_complete;" \
         "  assign device_temp_0 = mig_7series_0_device_temp;\n  assign init_calib_complete_0 = mig_7series_0_init_calib_complete;" \
         "cosmic_bd device_temp assign"
-    replace_once txt "        .sys_clk_i(clk_wiz_0_clk_out1)," \
+    replace_once_if_missing txt "        .device_temp(mig_7series_0_device_temp)," "        .sys_clk_i(clk_wiz_0_clk_out1)," \
         "        .device_temp(mig_7series_0_device_temp),\n        .sys_clk_i(clk_wiz_0_clk_out1)," \
         "cosmic_bd MIG device_temp connection"
-    replace_once txt "    device_temp_0,\n    init_calib_complete_0," \
+    replace_once_if_missing txt "    ext_refresh_tick," "    device_temp_0,\n    init_calib_complete_0," \
         "    device_temp_0,\n    ext_refresh_tick,\n    init_calib_complete_0," \
         "cosmic_bd ext_refresh_tick port"
-    replace_once txt "  output [11:0]device_temp_0;\n  output init_calib_complete_0;" \
+    replace_once_if_missing txt "  input ext_refresh_tick;" "  output [11:0]device_temp_0;\n  output init_calib_complete_0;" \
         "  output [11:0]device_temp_0;\n  input ext_refresh_tick;\n  output init_calib_complete_0;" \
         "cosmic_bd ext_refresh_tick declaration"
-    replace_once txt "        .device_temp(mig_7series_0_device_temp),\n        .sys_clk_i(clk_wiz_0_clk_out1)," \
+    replace_once_if_missing txt "        .ext_refresh_tick(ext_refresh_tick)," "        .device_temp(mig_7series_0_device_temp),\n        .sys_clk_i(clk_wiz_0_clk_out1)," \
         "        .device_temp(mig_7series_0_device_temp),\n        .ext_refresh_tick(ext_refresh_tick),\n        .sys_clk_i(clk_wiz_0_clk_out1)," \
         "cosmic_bd MIG ext_refresh_tick connection"
 }
 
 patch_file $wrapper {
-    replace_once txt "    init_calib_complete_0," \
+    replace_once_if_missing txt "    device_temp_0," "    init_calib_complete_0," \
         "    device_temp_0,\n    init_calib_complete_0," \
         "wrapper device_temp_0 port"
-    replace_once txt "  output init_calib_complete_0;" \
+    replace_once_if_missing txt "  output [11:0]device_temp_0;" "  output init_calib_complete_0;" \
         "  output [11:0]device_temp_0;\n  output init_calib_complete_0;" \
         "wrapper device_temp_0 declaration"
     replace_once_if_missing txt "  wire [11:0]device_temp_0;" "  wire ui_clk_0;" \
         "  wire ui_clk_0;\n  wire [11:0]device_temp_0;" \
         "wrapper device_temp wire"
-    replace_once txt "        .init_calib_complete_0(init_calib_complete_0)," \
+    replace_once_if_missing txt "        .device_temp_0(device_temp_0)," "        .init_calib_complete_0(init_calib_complete_0)," \
         "        .device_temp_0(device_temp_0),\n        .init_calib_complete_0(init_calib_complete_0)," \
         "wrapper cosmic_bd device_temp connection"
-    replace_once txt "    device_temp_0,\n    init_calib_complete_0," \
+    replace_once_if_missing txt "    ext_refresh_tick," "    device_temp_0,\n    init_calib_complete_0," \
         "    device_temp_0,\n    ext_refresh_tick,\n    init_calib_complete_0," \
         "wrapper ext_refresh_tick port"
-    replace_once txt "  output [11:0]device_temp_0;\n  output init_calib_complete_0;" \
+    replace_once_if_missing txt "  input ext_refresh_tick;" "  output [11:0]device_temp_0;\n  output init_calib_complete_0;" \
         "  output [11:0]device_temp_0;\n  input ext_refresh_tick;\n  output init_calib_complete_0;" \
         "wrapper ext_refresh_tick declaration"
     replace_once_if_missing txt "  wire ext_refresh_tick;" "  wire ui_clk_0;" \
         "  wire ui_clk_0;\n  wire ext_refresh_tick;" \
         "wrapper ext_refresh_tick wire"
-    replace_once txt "        .device_temp_0(device_temp_0),\n        .init_calib_complete_0(init_calib_complete_0)," \
+    replace_once_if_missing txt "        .ext_refresh_tick(ext_refresh_tick)," "        .device_temp_0(device_temp_0),\n        .init_calib_complete_0(init_calib_complete_0)," \
         "        .device_temp_0(device_temp_0),\n        .ext_refresh_tick(ext_refresh_tick),\n        .init_calib_complete_0(init_calib_complete_0)," \
         "wrapper cosmic_bd ext_refresh_tick connection"
 }
