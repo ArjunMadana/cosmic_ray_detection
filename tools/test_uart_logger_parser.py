@@ -1,4 +1,5 @@
 import json
+import csv
 import sys
 import tempfile
 import unittest
@@ -126,8 +127,11 @@ class DataStoreTests(unittest.TestCase):
 
             lines = [line for line in csv_path.read_text().splitlines()
                      if line and not line.startswith("#")]
-            self.assertEqual(len(lines), 2)
-            self.assertTrue(lines[1].endswith(",42.5,temp_test"))
+            rows = list(csv.DictReader(lines))
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["temp_c"], "42.5")
+            self.assertEqual(rows[0]["addr_count"], "0")
+            self.assertEqual(rows[0]["experiment"], "temp_test")
 
 
 if __name__ == "__main__":

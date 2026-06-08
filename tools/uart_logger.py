@@ -61,7 +61,10 @@ REFRESH_LABEL = {'OFF': 'Refresh OFF', 'SLOW': 'Slow (~100ms)',
                  'NORM': 'Normal (~7.8µs)', 'FAST': 'Fast (~3.9µs)'}
 PATTERN_LABEL = {'FF': '0xFFFFFFFF', '00': '0x00000000',
                  '55': '0x55555555', 'AA': '0xAAAAAAAA'}
-REFRESH_TO_CMD = {'OFF': '0', 'SLOW': '1', 'NORM': '2', 'FAST': '3'}
+
+
+def iso_from_ts(ts_unix):
+    return datetime.fromtimestamp(ts_unix, tz=timezone.utc).isoformat()
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -197,14 +200,15 @@ def parse_line(raw_bytes, ts_unix):
 
 class DataStore:
     CSV_FIELDS = ['timestamp', 'iteration', 'hold_s', 'refresh_rate', 'pattern',
-                  'flip_count', 'addr_overflow', 'temp_c', 'experiment']
+                  'flip_count', 'addr_count', 'addr_complete', 'addr_overflow',
+                  'temp_c', 'experiment']
 
     def __init__(self, output_dir, name, description, start_time_iso):
         self.name = name
         self.description = description
         self.records = []       # FLIP rows (include ts_unix for plotting)
         self.notes   = []       # NOTE records
-        self.refresh_rate = 'OFF'
+        self.refresh_rate = 'INTERNAL'
         self.pattern      = 'FF'
         self.temp_c       = None
         self.iteration = 0
@@ -259,6 +263,8 @@ class DataStore:
                 'refresh_rate': self.refresh_rate,
                 'pattern':      record.get('pattern', self.pattern),
                 'flip_count':   record['flip_count'],
+                'addr_count':   len(record.get('addrs', [])),
+                'addr_complete': record.get('addr_complete', ''),
                 'addr_overflow': record.get('addr_overflow', False),
                 'temp_c':       record.get('temp_c', self.temp_c),
                 'experiment':   self.name,
@@ -290,6 +296,70 @@ class DataStore:
                 f'  Flip mean  : {mean:.1f}  min: {min(counts)}  max: {max(counts)}\n'
                 f'  CSV   → {self.csv_path}\n'
                 f'  JSONL → {self.jsonl_path}')
+
+class ReplayStore:
+    """Read-only store with the DataStore surface needed by plotting code."""
+    def __init__(self, name, description):
+        self.name = name
+        self.description = description
+        self.records = []
+        self.notes = []
+        self.refresh_rate = 'INTERNAL'
+        self.pattern = 'FF'
+        self.temp_c = None
+        self.iteration = 0
+
+    def ingest(self, record):
+        rtype = record.get('type')
+        if rtype == 'NOTE':
+            self.notes.append(record)
+            return False
+        if rtype == 'REFRESH':
+            self.refresh_rate = record.get('refresh_rate', self.refresh_rate)
+            return False
+        if rtype == 'PATTERN':
+            self.pattern = record.get('pattern', self.pattern)
+            return False
+        if rtype == 'TEMP':
+            self.temp_c = record.get('temp_c', self.temp_c)
+            return False
+        if rtype == 'FLIP':
+            self.iteration += 1
+            self.records.append({
+                'timestamp': record['timestamp'],
+                'ts_unix': record['ts_unix'],
+                'iteration': self.iteration,
+                'hold_s': record['hold_s'],
+                'refresh_rate': self.refresh_rate,
+                'pattern': record.get('pattern', self.pattern),
+                'flip_count': record['flip_count'],
+                'addr_count': len(record.get('addrs', [])),
+                'addr_complete': record.get('addr_complete', ''),
+                'addr_overflow': record.get('addr_overflow', False),
+                'temp_c': record.get('temp_c', self.temp_c),
+                'experiment': self.name,
+            })
+            return True
+        return False
+
+    def add_note(self, text):
+        ts_unix = time.time()
+        record = {'type': 'NOTE', 'timestamp': iso_from_ts(ts_unix),
+                  'ts_unix': ts_unix, 'text': text}
+        self.notes.append(record)
+        return record
+
+    def close(self):
+        return
+
+    def summary(self):
+        if not self.records:
+            return 'Replay summary: no FLIP records.'
+        counts = [r['flip_count'] for r in self.records]
+        mean = sum(counts) / len(counts)
+        return (f'  Replay cycles : {self.iteration}\n'
+                f'  Flip mean     : {mean:.1f}  min: {min(counts)}  max: {max(counts)}')
+
 
 # ---------------------------------------------------------------------------
 # Hang detector
@@ -326,7 +396,7 @@ class BackgroundModel:
 
     def update(self, addrs: list):
         self._n_cycles += 1
-        for a in addrs:
+        for a in set(addrs):
             self._counts[a] = self._counts.get(a, 0) + 1
 
     @property
@@ -395,6 +465,7 @@ class SweepWindow(tk.Toplevel):
         self._running      = False
         self._sweep_data   = {}   # hold_s -> {addr: count}
         self._sweep_counts = {}   # hold_s -> [flip_count, ...]
+        self._sweep_addr_skips = {}  # hold_s -> skipped address-analysis cycles
 
         self._build_ui()
         self.after(self.PLOT_MS, self._update_plots)
@@ -481,6 +552,7 @@ class SweepWindow(tk.Toplevel):
         self._iters_target = iters
         self._sweep_data   = {s: {} for s in self._steps}
         self._sweep_counts = {s: [] for s in self._steps}
+        self._sweep_addr_skips = {s: 0 for s in self._steps}
         self._running      = True
         self._run_btn.config(state='disabled')
         self._stop_btn.config(state='normal')
@@ -525,9 +597,12 @@ class SweepWindow(tk.Toplevel):
 
     def on_flip(self, record):
         hold = self._steps[self._step_idx]
-        for addr in record.get('addrs', []):
-            d = self._sweep_data[hold]
-            d[addr] = d.get(addr, 0) + 1
+        if record.get('addr_complete'):
+            for addr in record.get('addrs', []):
+                d = self._sweep_data[hold]
+                d[addr] = d.get(addr, 0) + 1
+        else:
+            self._sweep_addr_skips[hold] = self._sweep_addr_skips.get(hold, 0) + 1
         self._sweep_counts[hold].append(record['flip_count'])
         self._iters_done += 1
         self._update_progress()
@@ -543,8 +618,8 @@ class SweepWindow(tk.Toplevel):
             completed = [s for s in self._steps if self._sweep_counts.get(s)]
             if completed:
                 self._redraw(completed)
-        except Exception:
-            pass
+        except Exception as e:
+            self._prog_var.set(f'Plot error: {e}')
         finally:
             self.after(self.PLOT_MS, self._update_plots)
 
@@ -560,45 +635,49 @@ class SweepWindow(tk.Toplevel):
         for bar, s, mean in zip(bars, completed, means):
             n_iter  = len(self._sweep_counts[s])
             n_addrs = len(self._sweep_data[s])
+            n_skip = self._sweep_addr_skips.get(s, 0)
             ax.text(bar.get_x() + bar.get_width() / 2,
                     mean + ymax * 0.02,
-                    f'{n_iter} iter\n{n_addrs:,} addr',
+                    f'{n_iter} iter\n{n_addrs:,} addr\n{n_skip} skipped',
                     ha='center', va='bottom', fontsize=7, color='#ccc')
         ax.set_xlabel('Hold time (s)')
         ax.set_ylabel('Mean flip count')
-        ax.set_title('Mean flip count per hold time  (annotated: iterations completed, unique failing addresses)')
+        ax.set_title('Mean flip count per hold time  (annotated: iterations, unique addresses, skipped address cycles)')
         if not any(m > 0 for m in means):
             ax.text(0.5, 0.5, 'No flips yet — try longer hold times',
                     transform=ax.transAxes, ha='center', va='center',
                     fontsize=10, color='#888')
 
-        # Scatter: failing address rank vs hold time
-        # Each dot is one address that flipped at that hold time.
-        # Dot brightness = how many times that address flipped across iterations.
+        # Scatter: failing address rank vs hold time. The x-axis is compressed
+        # to the addresses seen in the current sweep so sparse failures remain visible.
         ax2 = self._ax_heat
         ax2.clear()
         ax2.set_title('Failing address raster by hold time')
-        ax2.set_xlabel('Address rank (compressed — each dot = one unique failing cell)')
+        ax2.set_xlabel('Address rank (compressed)')
         ax2.set_ylabel('Hold time (s)')
         ax2.text(0.5, 0.98,
                  'Brighter dot = cell failed more often across iterations at that hold time.\n'
                  'Dots that appear at low hold times are the weakest cells.',
                  transform=ax2.transAxes, ha='center', va='top',
                  fontsize=7, color='#aaa')
-        all_addrs = sorted({a for s in completed for a in self._sweep_data[s]})
-        if all_addrs:
-            rank = {a: i for i, a in enumerate(all_addrs)}
+        if any(self._sweep_data[s] for s in completed):
+            all_addrs = sorted({addr for s in completed for addr in self._sweep_data[s]})
+            addr_rank = {addr: i for i, addr in enumerate(all_addrs)}
             xs, ys, cs = [], [], []
             for s in completed:
                 for addr, cnt in self._sweep_data[s].items():
-                    xs.append(rank[addr])
+                    xs.append(addr_rank[addr])
                     ys.append(s)
                     cs.append(cnt)
             max_c = max(cs) if cs else 1
             alphas = [min(1.0, 0.2 + 0.8 * c / max_c) for c in cs]
             for x, y, a in zip(xs, ys, alphas):
                 ax2.scatter(x, y, c='#00D4FF', s=6, alpha=a, linewidths=0)
-            ax2.set_xlabel(f'Address rank (compressed — {len(all_addrs):,} unique failing cells)')
+            if len(all_addrs) == 1:
+                ax2.set_xlim(-0.5, 0.5)
+            else:
+                ax2.set_xlim(-0.5, len(all_addrs) - 0.5)
+            ax2.set_xlabel(f'Address rank (compressed - {len(all_addrs):,} unique failing cells)')
 
         with warnings.catch_warnings():
             warnings.simplefilter('ignore', UserWarning)
@@ -621,6 +700,7 @@ class SweepWindow(tk.Toplevel):
             with open(path, 'w', newline='') as f:
                 f.write(f'# sweep experiment: {name}\n')
                 w = csv.DictWriter(f, fieldnames=['hold_s', 'unique_addrs',
+                                                   'addr_skipped_cycles',
                                                    'mean_flips', 'min_flips', 'max_flips'])
                 w.writeheader()
                 for s in self._steps:
@@ -628,6 +708,7 @@ class SweepWindow(tk.Toplevel):
                     if counts:
                         w.writerow({'hold_s': s,
                                     'unique_addrs': len(self._sweep_data[s]),
+                                    'addr_skipped_cycles': self._sweep_addr_skips.get(s, 0),
                                     'mean_flips': round(sum(counts) / len(counts), 1),
                                     'min_flips': min(counts),
                                     'max_flips': max(counts)})
@@ -674,6 +755,10 @@ class DosimeterApp:
         self._bg             = BackgroundModel()
         self._rare_records   = []     # (iteration, rare_count, clusters) for de-noised plot
         self._raster_records = []     # (iteration, hot_addrs, rare_addrs) for raster
+        self._addr_cycles_total = 0
+        self._addr_cycles_complete = 0
+        self._addr_cycles_skipped = 0
+        self._addr_overflow_cycles = 0
         self._last_plot_error = None
 
         self._build_ui()
@@ -783,10 +868,10 @@ class DosimeterApp:
         sf.grid(row=3, column=0, sticky='ew', padx=6)
 
         self._slabels = {}
-        for key, text in [('iter', 'Iter: —'), ('flips', 'Flips: —'),
-                          ('hold', 'Hold: —'), ('refresh', 'Refresh: —'),
-                          ('elapsed', 'Elapsed: —'), ('temp', 'Temp: —'),
-                          ('bg', 'BG: —'), ('hang', '')]:
+        for key, text in [('iter', 'Iter: -'), ('flips', 'Flips: -'),
+                          ('hold', 'Hold: -'), ('pattern', 'Pattern: -'),
+                          ('elapsed', 'Elapsed: -'), ('temp', 'Temp: -'),
+                          ('addrq', 'Addr: -'), ('bg', 'BG: -'), ('hang', '')]:
             lbl = ttk.Label(sf, text=text, padding=(10, 2))
             lbl.pack(side='left')
             self._slabels[key] = lbl
@@ -797,7 +882,7 @@ class DosimeterApp:
 
         # Hold time
         ttk.Label(ctrl, text='Hold time (s):').pack(side='left')
-        self._hold_var = tk.StringVar()
+        self._hold_var = tk.StringVar(value='5')
         hold_e = ttk.Entry(ctrl, textvariable=self._hold_var, width=6)
         hold_e.pack(side='left', padx=(2, 0))
         hold_e.bind('<Return>', lambda _: self._send_hold())
@@ -811,15 +896,6 @@ class DosimeterApp:
                               values=['0xFFFFFFFF', '0x00000000', '0x55555555', '0xAAAAAAAA'])
         pat_cb.pack(side='left', padx=(2, 0))
         ttk.Button(ctrl, text='Send', command=self._send_pattern).pack(side='left', padx=(2, 14))
-
-        # Refresh selector
-        ttk.Separator(ctrl, orient='vertical').pack(side='left', fill='y', padx=6)
-        ttk.Label(ctrl, text='Refresh:').pack(side='left')
-        self._refresh_var = tk.StringVar(value='OFF')
-        ref_cb = ttk.Combobox(ctrl, textvariable=self._refresh_var, width=5, state='readonly',
-                              values=['OFF', 'SLOW', 'NORM', 'FAST'])
-        ref_cb.pack(side='left', padx=(2, 0))
-        ttk.Button(ctrl, text='Send', command=self._send_refresh).pack(side='left', padx=(2, 14))
 
         # Alert threshold
         ttk.Label(ctrl, text='Alert if flips >').pack(side='left')
@@ -911,6 +987,27 @@ class DosimeterApp:
         self._addr_buf = []
         self._addr_overflow = False
 
+    def _reset_address_quality(self):
+        self._addr_cycles_total = 0
+        self._addr_cycles_complete = 0
+        self._addr_cycles_skipped = 0
+        self._addr_overflow_cycles = 0
+        self._update_address_quality_label()
+
+    def _update_address_quality_label(self):
+        if not hasattr(self, '_slabels'):
+            return
+        total = self._addr_cycles_total
+        if total == 0:
+            text = 'Addr: -'
+        else:
+            text = (
+                f'Addr: {self._addr_cycles_complete}/{total} complete'
+                f'  skipped:{self._addr_cycles_skipped}'
+                f'  ovf:{self._addr_overflow_cycles}'
+            )
+        self._slabels['addrq'].config(text=text)
+
     def _draw_empty_plot(self):
         self._ax.clear()
         self._ax_temp.clear()
@@ -943,12 +1040,19 @@ class DosimeterApp:
             messagebox.showerror('Missing dependency',
                                  'pyserial is not installed.\nRun: pip install pyserial')
             return
+        try:
+            baud = int(self._baud_var.get())
+        except ValueError:
+            messagebox.showwarning('Baud', 'Enter a numeric baud rate, for example 115200')
+            return
+        if baud <= 0:
+            messagebox.showwarning('Baud', 'Enter a positive baud rate')
+            return
         self._board_ready = False
         self._running     = False
         self._stop  = threading.Event()
         self._q     = queue.Queue()
-        self._reader = SerialReader(self._port_var.get(), int(self._baud_var.get()),
-                                    self._q, self._stop)
+        self._reader = SerialReader(self._port_var.get(), baud, self._q, self._stop)
         self._reader.start()
         self._connected = True
         self._conn_btn.config( state='disabled')
@@ -959,6 +1063,10 @@ class DosimeterApp:
 
     def _start(self):
         if not self._board_ready or not self._reader:
+            return
+        hold_val = self._hold_var.get().strip()
+        if not hold_val.isdigit() or not (1 <= int(hold_val) <= 9999):
+            messagebox.showwarning('Hold time', 'Enter an integer between 1 and 9999')
             return
         name = self._name_var.get().strip().replace(' ', '_') or 'unnamed'
         desc = self._desc_var.get().strip()
@@ -975,20 +1083,17 @@ class DosimeterApp:
         self._bg   = BackgroundModel()
         self._hang = HangDetector()
         self._clear_address_capture()
+        self._reset_address_quality()
         self._draw_empty_plot()
         self._draw_empty_denoised()
         self._draw_empty_raster()
 
         # Send initial conditions before Go so first cycle uses GUI values
-        hold_val = self._hold_var.get().strip()
-        if hold_val.isdigit() and 1 <= int(hold_val) <= 9999:
-            self._reader.write(f'H{hold_val}\n'.encode('ascii'))
+        self._reader.write(f'H{hold_val}\n'.encode('ascii'))
         pat_val = self._pattern_var.get()
         pat_idx = {'0xFFFFFFFF': '0', '0x00000000': '1',
                    '0x55555555': '2', '0xAAAAAAAA': '3'}.get(pat_val, '0')
         self._reader.write(f'P{pat_idx}\n'.encode('ascii'))
-        ref_idx = REFRESH_TO_CMD.get(self._refresh_var.get(), '0')
-        self._reader.write(f'R{ref_idx}\n'.encode('ascii'))
         self._reader.write(b'G')
 
         self._running = True
@@ -1110,6 +1215,7 @@ class DosimeterApp:
         elif record['type'] == 'PATTERN':
             label = PATTERN_LABEL.get(record['pattern'], record['pattern'])
             self._pat_events.append((record['ts_unix'], label))
+            self._slabels['pattern'].config(text=f'Pattern: {label}')
             self._log_append(f"Pattern → {label}", 'interval')
 
         elif record['type'] == 'TEMP':
@@ -1155,6 +1261,14 @@ class DosimeterApp:
                 and record.get('flip_count', 0) == len(addrs)
             )
             record['addr_complete'] = addr_complete
+            self._addr_cycles_total += 1
+            if addr_complete:
+                self._addr_cycles_complete += 1
+            else:
+                self._addr_cycles_skipped += 1
+            if record.get('addr_overflow'):
+                self._addr_overflow_cycles += 1
+            self._update_address_quality_label()
             if self._sweep_win and self._sweep_win._running:
                 self._sweep_win.on_flip(record)
             if addr_complete:
@@ -1194,7 +1308,7 @@ class DosimeterApp:
             self._slabels['iter'].config(    text=f"Iter: {self._store.iteration}")
             self._slabels['flips'].config(   text=f"Flips: {fc:,}")
             self._slabels['hold'].config(    text=f"Hold: {record['hold_s']} s")
-            self._slabels['refresh'].config( text=f"Refresh: {self._store.refresh_rate}")
+            self._slabels['pattern'].config( text=f"Pattern: {record.get('pattern', self._store.pattern)}")
             self._slabels['elapsed'].config( text=f"Elapsed: {elapsed} s")
 
             is_alert = self._alert is not None and fc > self._alert
@@ -1205,7 +1319,7 @@ class DosimeterApp:
             self._log_append(
                 f"[{record['timestamp'][11:19]}] #{self._store.iteration:>4}  "
                 f"flips={fc:>10,}  addrs={n_addrs:>5}  hold={record['hold_s']}s  "
-                f"refresh={self._store.refresh_rate}{temp_str}{ovf_str}", tag)
+                f"pattern={record.get('pattern', self._store.pattern)}{temp_str}{ovf_str}", tag)
             if fc != n_addrs:
                 self._log_append(
                     f"  address count mismatch: flip_count={fc:,}, captured={n_addrs:,}",
@@ -1264,16 +1378,8 @@ class DosimeterApp:
             ax.axhline(self._alert, color='#F44747', linestyle='--',
                        linewidth=1, label=f'Alert: {self._alert:,}')
 
-        # Refresh-rate change markers
         x_min = xs[0] if xs else 0
         ymax  = ax.get_ylim()[1] or 1
-        for ts_u, label in self._ref_events:
-            rx = ts_u - start
-            if rx >= x_min:
-                ax.axvline(rx, color='#C586C0', linestyle=':', linewidth=1.2, alpha=0.7)
-                ax.text(rx, ymax * 0.95, label, fontsize=7, color='#C586C0',
-                        rotation=90, va='top')
-
         # Pattern-change markers (green)
         for ts_u, label in self._pat_events:
             px = ts_u - start
@@ -1292,10 +1398,20 @@ class DosimeterApp:
 
         # Stats box
         if ys:
-            mean = sum(ys) / len(ys)
-            std  = (sum((y - mean) ** 2 for y in ys) / len(ys)) ** 0.5
+            groups = {}
+            for r in records:
+                key = (r.get('pattern', ''), r.get('hold_s', ''))
+                groups.setdefault(key, []).append(r['flip_count'])
+            stat_lines = []
+            for (pattern, hold_s), vals in sorted(groups.items())[:6]:
+                mean = sum(vals) / len(vals)
+                stat_lines.append(
+                    f'{pattern}/{hold_s}s n={len(vals)} mean={mean:.0f} max={max(vals)}'
+                )
+            if len(groups) > 6:
+                stat_lines.append(f'+{len(groups) - 6} more groups')
             ax.text(0.99, 0.97,
-                    f'n={len(ys)}\nmean={mean:.0f}\nstd={std:.0f}\nmin={min(ys)}\nmax={max(ys)}',
+                    '\n'.join(stat_lines),
                     transform=ax.transAxes, fontsize=8, va='top', ha='right',
                     bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
 
@@ -1322,7 +1438,7 @@ class DosimeterApp:
         ax.set_ylabel('Bit Flips')
         ax.set_title(
             f'{self._store.name}  |  Iter: {self._store.iteration}'
-            f'  |  Refresh: {self._store.refresh_rate}')
+            f'  |  Pattern: {self._store.pattern}')
         handles, labels = ax.get_legend_handles_labels()
         if handles:
             ax.legend(handles, labels, loc='upper left', fontsize=8)
@@ -1352,40 +1468,51 @@ class DosimeterApp:
 
         # Background status annotation
         if self._bg.ready:
-            bg_text = f'Background: {self._bg.n_hot:,} hot pixels  |  Cycles: {self._bg.n_cycles}'
+            bg_text = (
+                f'Background: {self._bg.n_hot:,} hot pixels  |  '
+                f'Address cycles: {self._bg.n_cycles} complete, '
+                f'{self._addr_cycles_skipped} skipped'
+            )
         else:
-            bg_text = f'Building background… ({self._bg.n_cycles}/{self._bg.min_cycles} cycles)'
+            bg_text = (
+                f'Building background... ({self._bg.n_cycles}/{self._bg.min_cycles} '
+                f'complete address cycles, {self._addr_cycles_skipped} skipped)'
+            )
         ax.text(0.01, 0.97, bg_text, transform=ax.transAxes,
                 fontsize=8, va='top', color='#9CDCFE',
                 bbox=dict(boxstyle='round', facecolor='#1e1e1e', alpha=0.6))
 
         ax.set_xlabel('Iteration')
         ax.set_ylabel('Rare flips')
-        ax.set_title('De-noised signal (thermal hot pixels removed)')
+        if self._bg.ready:
+            ax.set_title('De-noised signal (thermal hot pixels removed)')
+        else:
+            ax.set_title('Building background model (rare events disabled)')
         with warnings.catch_warnings():
             warnings.simplefilter('ignore', UserWarning)
             self._fig2.tight_layout()
         self._canvas2.draw_idle()
 
     def _redraw_raster(self):
-        # Build a compressed address axis: only addresses seen across all cycles get a rank.
-        # Hot pixels → red, rare events → blue, so thermal stripes and anomalies are distinct.
+        # Plot a compressed rank of every address currently visible in the window.
+        # If a new address appears between two old addresses, ranks shift on redraw.
         records = self._raster_records[-self._window:]
 
-        # Collect all seen addresses and assign a rank
-        all_addrs = sorted({a for _, hot, rare in records for a in hot + rare})
+        # Collect all seen addresses so the empty state can be drawn cleanly.
+        all_addrs = sorted({a for _, hot, rare in records for a in set(hot) | set(rare)})
         if not all_addrs:
             self._draw_empty_raster()
             return
-        rank = {a: i for i, a in enumerate(all_addrs)}
-
+        addr_rank = {addr: i for i, addr in enumerate(all_addrs)}
         hot_x, hot_y, rare_x, rare_y = [], [], [], []
         for it, hot, rare in records:
-            for a in hot:
-                hot_x.append(rank[a])
+            rare_set = set(rare)
+            hot_set = set(hot) - rare_set
+            for a in sorted(hot_set):
+                hot_x.append(addr_rank[a])
                 hot_y.append(it)
-            for a in rare:
-                rare_x.append(rank[a])
+            for a in sorted(rare_set):
+                rare_x.append(addr_rank[a])
                 rare_y.append(it)
 
         ax = self._ax3
@@ -1398,9 +1525,13 @@ class DosimeterApp:
             ax.scatter(rare_x, rare_y, c='#00D4FF', s=8, alpha=1.0,
                        linewidths=0, label='Rare event', zorder=3)
 
-        ax.set_xlabel(f'Address rank (compressed — {len(all_addrs):,} unique addresses)')
+        if len(all_addrs) == 1:
+            ax.set_xlim(-0.5, 0.5)
+        else:
+            ax.set_xlim(-0.5, len(all_addrs) - 0.5)
+        ax.set_xlabel(f'Address rank (compressed - {len(all_addrs):,} unique addresses)')
         ax.set_ylabel('Iteration')
-        ax.set_title('Address raster  —  red=thermal, blue=rare event')
+        ax.set_title('Address raster - red=thermal, blue=rare')
         if hot_x or rare_x:
             ax.legend(loc='upper right', fontsize=8, markerscale=4)
         with warnings.catch_warnings():
@@ -1442,20 +1573,6 @@ class DosimeterApp:
         else:
             self._log_append('⚠ Not connected', 'alert')
 
-    def _send_refresh(self):
-        val = self._refresh_var.get()
-        idx = REFRESH_TO_CMD.get(val)
-        if idx is None:
-            return
-        if self._reader:
-            cmd = f'R{idx}\n'.encode('ascii')
-            if self._reader.write(cmd):
-                self._log_append(f'Sent refresh = {val} to board', 'refresh')
-            else:
-                self._log_append('Not connected - command not sent', 'alert')
-        else:
-            self._log_append('Not connected', 'alert')
-
     def _set_alert(self):
         val = self._alert_var.get().strip()
         if not val:
@@ -1495,11 +1612,7 @@ class DosimeterApp:
         self._name_var.set(path.stem)
         self._desc_var.set('replay')
         self._start_unix = None
-        self._store = DataStore(
-            output_dir=str(path.parent),
-            name=path.stem + '_replay',
-            description='replay',
-            start_time_iso=datetime.now(tz=timezone.utc).isoformat())
+        self._store = ReplayStore(path.stem + '_replay', 'replay')
         self._ref_events.clear()
         self._pat_events.clear()
         self._rare_records.clear()
@@ -1507,6 +1620,7 @@ class DosimeterApp:
         self._temp_records.clear()
         self._bg = BackgroundModel()
         self._clear_address_capture()
+        self._reset_address_quality()
         self._draw_empty_plot()
         self._draw_empty_denoised()
         self._draw_empty_raster()
@@ -1561,6 +1675,14 @@ class DosimeterApp:
                             and record.get('flip_count', 0) == len(addrs)
                         )
                         record['addr_complete'] = addr_complete
+                        self._addr_cycles_total += 1
+                        if addr_complete:
+                            self._addr_cycles_complete += 1
+                        else:
+                            self._addr_cycles_skipped += 1
+                        if record.get('addr_overflow'):
+                            self._addr_overflow_cycles += 1
+                        self._update_address_quality_label()
                         if addr_complete:
                             self._bg.update(addrs)
                             hot, rare = self._bg.classify(addrs)

@@ -2,7 +2,7 @@
 
 Last updated: 2026-05-25
 
-Production baseline note: `detector_fsm.refresh_tick_out` is still routed through the generated hierarchy, but MIG `rank_common` uses its internal `refresh_tick_lcl`. `R<n>\n` is accepted/logged and does not control MIG refresh in this baseline.
+Production baseline note: `detector_fsm.refresh_tick_out` is still routed through the generated hierarchy, but MIG `rank_common` uses its internal `refresh_tick_lcl`. GUI refresh controls are removed for now; MIG refresh is internal in this baseline.
 
 ## Signal Path
 

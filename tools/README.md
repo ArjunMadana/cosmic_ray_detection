@@ -41,7 +41,7 @@ python tools/uart_logger.py --replay data/baseline_20260403_142200.jsonl
 │    yellow dashed lines = your notes                           │
 │                                                               │
 ├─ Status bar ──────────────────────────────────────────────────┤
-│ Iter: 12  Flips: 529,417  Hold: 5 s  Refresh: OFF  Elapsed:… │
+│ Iter: 12  Flips: 529,417  Hold: 5 s  Pattern: AA  Elapsed:…  │
 ├─ Controls ────────────────────────────────────────────────────┤
 │ Hold time (s): [____] [Send to board]                         │
 │ Alert if flips > [______] [Set]   Plot last [200] points [Set]│
@@ -62,7 +62,7 @@ python tools/uart_logger.py --replay data/baseline_20260403_142200.jsonl
 2. **Fill in** Name and Description (stored in the file header)
 3. **Select port** from the dropdown (click ↺ to refresh the list)
 4. **Connect** — the board starts being logged immediately
-5. **Select hold, pattern, and refresh** in the GUI, then click Start. The GUI sends `H`, `P`, `R`, then `G`; physical switches/buttons are not part of the active control path.
+5. **Select hold and pattern** in the GUI, then click Start. The GUI sends `H`, `P`, then `G`; physical switches/buttons are not part of the active control path.
 6. **Add notes** — type anything in the Annotation box and press Enter.  Notes get a timestamp and appear as yellow dashed lines on the plot and in the JSONL file.  Useful for recording: "tilted board 45°", "started heating lamp", "changed refresh rate", etc.
 7. **Disconnect** — saves files and prints a session summary in the log.
 
@@ -87,6 +87,8 @@ Every event in order. FLIP records include captured address arrays when availabl
 
 Address-based graphing is conservative: raw flip counts are always plotted, but the de-noised and raster tabs only consume complete, non-overflowed address captures.
 
+Raster x-axes show compressed address rank. The addresses observed in the current view are sorted and plotted as consecutive x positions, so sparse failures stay visible and each distinct address appears as its own dot.
+
 ---
 
 ## Changing hold time from the GUI
@@ -107,7 +109,6 @@ Set *Alert if flips >* N. Any FLIP record above the threshold is highlighted red
 |---|---|---|
 | FLIP result | `HOLD:0005s PAT:AA FLIPS:00000ABC` | End of every SCAN cycle |
 | Address header | `ADDRS:0002 OVF:0` | Before each FLIP result |
-| Refresh change | `REFRESH:OFF` / `SLOW` / `NORM` / `FAST` | GUI command accepted |
 | Pattern change | `PATTERN:AA` | GUI command accepted |
 | Interval change | `INTERVAL:0060s` | GUI command accepted |
 | Temperature | `TEMP:7A3` | After each FLIP result |

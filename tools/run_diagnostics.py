@@ -440,7 +440,8 @@ def probe_serial(args):
         raise SystemExit("No serial port found. Use --port COMx.")
 
     print(f"Probing {port} @ {args.baud} for {args.probe_seconds:g}s")
-    print("Press the board PROG/power-cycle during this window if you want to catch boot text.")
+    print("If booting from known-good flash, press PROG or power-cycle to catch boot text.")
+    print("After volatile JTAG programming, do not press PROG; it discards the loaded bitstream.")
     deadline = time.time() + args.probe_seconds
     next_reset = time.time()
     with serial.Serial(port, args.baud, timeout=0.2) as ser:
@@ -545,7 +546,7 @@ def run_live(args):
 
             for diag_mode in args.diag_modes:
                 previous_pattern = None
-                for refresh in args.refresh:
+                for refresh in ["INTERNAL"]:
                     for pattern in args.patterns:
                         pattern = pattern.upper()
                         if pattern not in PATTERN_TO_CMD:
@@ -556,7 +557,6 @@ def run_live(args):
                         )
                         write_serial(ser, f"H{args.hold}\n")
                         write_serial(ser, f"P{PATTERN_TO_CMD[pattern]}\n")
-                        write_serial(ser, f"R{REFRESH_TO_CMD[refresh]}\n")
                         write_serial(ser, "G")
 
                         cycles_for_pattern = 0
@@ -903,6 +903,8 @@ def main(argv=None):
         raise SystemExit("--hold must be >= 1")
     if not args.refresh:
         raise SystemExit("--refresh must include at least one mode")
+    if not args.replay and args.refresh != ["NORM"]:
+        print("WARNING: production firmware uses MIG internal refresh; --refresh is ignored in live mode.")
     if not args.diag_modes:
         raise SystemExit("--diag-modes must include at least one mode")
     if not args.replay and not args.expect_diag and args.diag_modes != ["NORMAL"]:
