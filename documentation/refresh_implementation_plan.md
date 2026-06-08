@@ -2,13 +2,13 @@
 
 Last updated: 2026-05-25
 
-Refresh control is implemented through the GUI and UART only. The old physical-control plan is obsolete.
+Refresh control is deferred. The old physical-control plan is obsolete, and the GUI no longer exposes refresh controls in the production graphing UI.
 
-Current production baseline: the generated-BD patch leaves MIG on its internal refresh generator. `R<n>` commands are accepted and logged, but they do not control MIG refresh until refresh-control restoration is revisited.
+Current production baseline: the generated-BD patch leaves MIG on its internal refresh generator until refresh-control restoration is revisited.
 
 ## Firmware
 
-`detector_fsm` owns the refresh selector:
+The previous `detector_fsm` refresh selector is dormant while MIG uses internal refresh:
 
 | UART | Mode | Period source |
 |------|------|---------------|
@@ -56,25 +56,20 @@ This deliberately disables GUI-controlled MIG refresh for the production cleanup
 
 ## GUI
 
-The GUI exposes refresh as a dropdown next to hold and pattern controls. On Start it sends:
+The GUI controls hold and pattern. On Start it sends:
 
 ```text
 H<n>\n
 P<n>\n
-R<n>\n
 G
 ```
 
-The runner accepts comma-separated refresh sweeps, for example:
+The runner ignores `--refresh` in live production mode and keeps MIG on internal refresh.
 
-```bash
-python -B tools/run_diagnostics.py --port COM3 --baud 115200 --hold 1 --refresh OFF,SLOW,NORM,FAST --patterns FF,00,55,AA,FF --cycles 2
-```
-
-Replay tracks `REFRESH` records and redraws the raw, denoised, and raster tabs with the same pipeline as live data.
+Replay tolerates older `REFRESH` records, but current graphing does not present refresh as an active experiment setting.
 
 ## Validation
 
 - Use the Python parser test for `REFRESH`.
 - Run `detector_fsm_tb.v` in Vivado/xsim.
-- On hardware, run the production sanity sequence at `NORM`, then a short refresh-selector sweep. In this baseline the selector is logged but MIG still uses its internal refresh timer.
+- On hardware, run the production sanity sequence while MIG uses its internal refresh timer.

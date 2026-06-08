@@ -43,6 +43,9 @@ module detector_fsm_tb;
     reg        w_seen = 0;
     reg        stall_mode = 0;
     reg [1:0]  write_order_mode = 0;
+    reg [8*16-1:0] uart_window = 0;
+    integer ar_count;
+    integer read_addr_hits [0:MEM_WORDS-1];
     integer i;
 
     detector_fsm #(
@@ -98,8 +101,11 @@ module detector_fsm_tb;
             w_seen  <= 0;
             bresp   <= 0;
             rresp   <= 0;
+            ar_count <= 0;
             for (i = 0; i < MEM_WORDS; i = i + 1)
                 mem[i] <= 32'hCAFE0000 + i;
+            for (i = 0; i < MEM_WORDS; i = i + 1)
+                read_addr_hits[i] <= 0;
         end else begin
             case (write_order_mode)
                 2'd1: begin
@@ -137,6 +143,8 @@ module detector_fsm_tb;
             if (arvalid && arready && !rvalid) begin
                 rdata <= mem[araddr[7:2]];
                 rvalid <= 1;
+                ar_count <= ar_count + 1;
+                read_addr_hits[araddr[7:2]] <= read_addr_hits[araddr[7:2]] + 1;
             end else if (rvalid && rready) begin
                 rvalid <= 0;
             end
@@ -151,6 +159,41 @@ module detector_fsm_tb;
             rx_valid <= 1;
             @(posedge clk);
             rx_valid <= 0;
+        end
+    endtask
+
+    always @(posedge clk) begin
+        if (rst) begin
+            uart_window <= 0;
+        end else if (uart_valid && uart_ready) begin
+            uart_window <= {uart_window[8*15-1:0], uart_data};
+        end
+    end
+
+    task wait_uart_window;
+        input [8*16-1:0] expected;
+        integer timeout;
+        begin
+            timeout = 0;
+            while (uart_window != expected && timeout < 2000) begin
+                @(posedge clk);
+                timeout = timeout + 1;
+            end
+            if (timeout >= 2000) begin
+                $display("FAIL UART window not seen. got=%s expected=%s", uart_window, expected);
+                $finish;
+            end
+        end
+    endtask
+
+    task send_hold_0005;
+        begin
+            send_byte("H");
+            send_byte("0");
+            send_byte("0");
+            send_byte("0");
+            send_byte("5");
+            send_byte(8'h0A);
         end
     endtask
 
@@ -188,6 +231,9 @@ module detector_fsm_tb;
         reg [31:0] expected_word;
         begin
             timeout = 0;
+            ar_count = 0;
+            for (j = 0; j < MEM_WORDS; j = j + 1)
+                read_addr_hits[j] = 0;
             while (dut.state == 5'd9 && timeout < 20000) begin
                 @(posedge clk);
                 timeout = timeout + 1;
@@ -204,6 +250,16 @@ module detector_fsm_tb;
             if (dut.hit_counter != 0) begin
                 $display("FAIL mismatch count: got %0d", dut.hit_counter);
                 $finish;
+            end
+            if (ar_count != MEM_WORDS) begin
+                $display("FAIL read coverage count: got %0d expected %0d", ar_count, MEM_WORDS);
+                $finish;
+            end
+            for (j = 0; j < MEM_WORDS; j = j + 1) begin
+                if (read_addr_hits[j] != 1) begin
+                    $display("FAIL read addr coverage[%0d]: got %0d expected 1", j, read_addr_hits[j]);
+                    $finish;
+                end
             end
             expected_word = pattern_word(expected_pattern);
             for (j = 0; j < MEM_WORDS; j = j + 1) begin
@@ -222,6 +278,8 @@ module detector_fsm_tb;
         calib_complete <= 1;
 
         repeat (20) @(posedge clk);
+        send_hold_0005();
+        wait_uart_window({"INTERVAL:0005s", 8'h0D, 8'h0A});
         start_cycle();
 
         stall_mode <= 0;

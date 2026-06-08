@@ -5,7 +5,7 @@ Last updated: 2026-05-25
 ## Current Baseline
 
 - UI-only experiment control over UART.
-- GUI controls hold, pattern, refresh, start, and reset.
+- GUI controls hold, pattern, start, and reset.
 - Firmware timing uses `UI_CLK_HZ = 150 MHz`.
 - UART runs at `115200` baud while hardware UART bring-up is being isolated.
 - A `BOOT` banner is emitted before the detector FSM is released, so UART pin/framing can be separated from detector/MIG behavior.
@@ -13,24 +13,24 @@ Last updated: 2026-05-25
 - Replay uses the same analysis path as live data.
 - The first-read/pattern-change bug is fixed by strict single-outstanding AXI writes.
 - Temporary diagnostic hardware modes were removed from the production FSM.
-- Current baseline leaves MIG on internal refresh; `R<n>` is accepted/logged but not applied to MIG until refresh-control restoration is revisited.
+- Current baseline leaves MIG on internal refresh. GUI refresh controls are removed until refresh-control restoration is revisited.
 
 ## Implemented Features
 
 ### UART Control
 
-Commands: `H`, `P`, `R`, `G`, `X`.
+Commands: `H`, `P`, `G`, `X`.
 
 Board acknowledgements and telemetry: `READY`, `INTERVAL`, `PATTERN`, `REFRESH`, `ADDRS`, `HOLD`, `TEMP`.
 
 ### GUI
 
-- Refresh dropdown added beside hold and pattern controls.
-- Start sends `H`, `P`, `R`, then `G`.
+- Start sends `H`, `P`, then `G`.
 - Reset Board is enabled immediately after serial connection.
 - Start remains disabled until `READY`.
 - Replay redraws raw, denoised, and raster tabs, reconstructing address arrays from either embedded `addrs` fields or separate `ADDRS`/address records.
 - De-noised and raster views only consume complete, non-overflowed address captures.
+- Address rasters use compressed address rank. The addresses visible in the current window are sorted and mapped to consecutive x positions so each distinct address appears as its own dot.
 
 ### Tooling
 
@@ -47,7 +47,7 @@ Board acknowledgements and telemetry: `READY`, `INTERVAL`, `PATTERN`, `REFRESH`,
    - Use Reset Board to recover `READY`.
    - Start with chosen hold/pattern/refresh and confirm first-cycle settings.
    - Change pattern during operation and confirm `FLIPS:00000000` remains stable.
-   - Run a short refresh sweep once normal operation is clean.
+   - Use longer hold-time sweeps once normal operation is clean.
 
 ## Completed Validation
 

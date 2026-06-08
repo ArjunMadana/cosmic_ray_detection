@@ -5,9 +5,8 @@ Last updated: 2026-05-25
 ## Implemented
 
 - Removed physical experiment controls from the active firmware path.
-- Added UART refresh command `R<n>\n`.
 - Kept UART commands `H<n>\n`, `P<n>\n`, `G`, and `X`.
-- Added GUI refresh selection and Start sequencing: `H`, `P`, `R`, `G`.
+- GUI Start sequencing is now `H`, `P`, `G`; refresh control is removed from the GUI while MIG uses internal refresh.
 - Enabled Reset Board immediately after connection.
 - Restored firmware timing to `UI_CLK_HZ = 150_000_000` after hardware UART bytes matched the older working divider assumption rather than the generated BD metadata.
 - Added address capture overflow reporting.
@@ -17,8 +16,10 @@ Last updated: 2026-05-25
 - Removed the `H<n>` seconds-to-cycles DSP multiply from the firmware control path; hold timing now counts UI-clock ticks into elapsed seconds.
 - Staged scan mismatches before writing the address-capture buffer after routed timing showed SmartConnect read-response paths driving distributed RAM write enables.
 - Staged address streaming through a dedicated word register after routed timing showed the address-buffer read path feeding the shared report register.
+- Changed SCAN to a strict single-outstanding AXI read sequencer after live captures showed many streamed address entries all equal to `0x0000000`. The FSM now latches the issued read address, waits for AR handshake, waits for R data, compares using the latched address, then advances.
 - Split UART text formatting into `uart_reporter.v` so the detector FSM now requests complete messages instead of carrying the byte formatter, UART byte index, and line-end logic in the AXI control state machine.
 - Converted address capture to a synchronous block-RAM inference template after asynchronous streaming reads caused Vivado to infer the 4096x28 buffer as flip-flops.
+- Removed the reset-block assignment to `addr_buf_rd_data`. Synthesis had two procedural drivers for that register and resolved the UART address-buffer read data to a constant zero, which caused complete address streams where every reported address was `0x0000000`.
 - Replaced `uart_tx.v` with a conventional immediate-start UART transmitter after a timing-clean flashed build still produced deterministic non-ASCII bytes on the only real USB serial port.
 - Lowered UART to `115200` and added a pre-FSM `BOOT` banner so hardware UART bring-up can be isolated from detector/MIG behavior.
 - Routed replayed FLIP records through the same background, rare-event, raster, temperature, and clustering logic as live data.
@@ -26,7 +27,7 @@ Last updated: 2026-05-25
 - Added Python parser/storage tests.
 - Added `detector_fsm_tb.v` for AXI coverage and pattern-latch testing.
 - Added `D3=VERIFY` pre-hold verification and `VDIAG` reporting to separate fill/write failures from hold/refresh/scan failures.
-- Switched the generated-BD hook to a MIG-internal-refresh production baseline: `R<n>` is accepted/logged, but `rank_common.refresh_tick` uses `refresh_tick_lcl`.
+- Switched the generated-BD hook to a MIG-internal-refresh production baseline: `rank_common.refresh_tick` uses `refresh_tick_lcl`.
 - Replaced FILL/FILL2 with a strict single-outstanding AXI write sequencer and added `AW`, `W`, and `B` handshake counters to `DIAG`.
 - Removed the temporary `D<n>`, `DIAG`, and `VDIAG` hardware paths after the strict write sequencer fixed the VERIFY run. Current firmware emits only production telemetry.
 
@@ -38,7 +39,6 @@ PC to board:
 |---------|---------|
 | `H<n>\n` | Set hold seconds, 1-9999 |
 | `P<n>\n` | Set pattern: `0=FF`, `1=00`, `2=55`, `3=AA` |
-| `R<n>\n` | Set refresh: `0=OFF`, `1=SLOW`, `2=NORM`, `3=FAST` |
 | `G` | Start cycling |
 | `X` | Abort current cycle and return to `WAIT_GO` |
 
@@ -59,6 +59,8 @@ Board to PC:
 
 The first-read/pattern-change spike was a firmware write-sequencing bug, not a physical effect. The old fill loop could reissue the same address while waiting for delayed AXI `B` responses, then advance once per response and skip later addresses. The production FSM keeps the fix: FILL/FILL2 issue one write at a time, latch the issued address, wait for AW, wait for W, wait for B, then advance.
 
+The later `ADDRS` issue had the same shape on the read side. The old scan loop could issue repeated reads for the same current address while waiting for delayed `R` responses. Current SCAN is also single-outstanding: latch read address, wait for AR, wait for R, compare/capture the latched address, then advance.
+
 The temporary VERIFY/DIAG hardware confirmed the fix on 2026-05-25 (`data/diagnostics/diagnostic_live_20260525_131823.*`): all 15 VERIFY cycles were clean with `VC=0` and `AW=W=B=0x02000000`. Those temporary hardware paths have now been removed to reduce the active FSM.
 
 ## Automated Diagnostic Runner
@@ -74,10 +76,10 @@ Old or production captures without `DIAG` are classified as `FLIPS_NO_DIAG` when
 Use live mode after programming the production firmware:
 
 ```bash
-python -B tools/run_diagnostics.py --port auto --hold 1 --refresh NORM --patterns FF,00,55,AA,FF --cycles 3
+python -B tools/run_diagnostics.py --port auto --hold 1 --patterns FF,00,55,AA,FF --cycles 3
 ```
 
-The runner sends `X`, waits for `READY`, then runs `H`, `P`, `R`, `G` sequences. It writes a raw JSONL capture, a CSV summary, and a Markdown report under `data/diagnostics`. It still understands older `DIAG`/`VDIAG` records for replay, but current firmware does not emit them. Production Markdown reports use a compact table; the legacy FILL/SCAN/VDIAG columns only appear when those records are actually present.
+The runner sends `X`, waits for `READY`, then runs `H`, `P`, `G` sequences. It writes a raw JSONL capture, a CSV summary, and a Markdown report under `data/diagnostics`. It still understands older `DIAG`/`VDIAG` records for replay, but current firmware does not emit them. Production Markdown reports use a compact table; the legacy FILL/SCAN/VDIAG columns only appear when those records are actually present.
 
 Classification tags:
 
@@ -97,6 +99,8 @@ Classification tags:
 - `FLIPS_NO_DIAG`: production telemetry reported flips without diagnostic counters; use the raw result, but do not infer the failing stage from that capture alone.
 
 GUI address analysis is conservative: raw `FLIP` rows are always logged, but the de-noised background model and address raster only consume complete, non-overflowed address lists. Replay reconstructs address arrays from either embedded `addrs` fields or separate `ADDRS`/address records before drawing the denoised and raster tabs.
+
+Address rasters plot compressed address rank. The addresses visible in the current window are sorted and mapped to consecutive x positions, so sparse failures remain visible and each distinct address is drawn as its own dot.
 
 ## Remaining Hardware Acceptance
 

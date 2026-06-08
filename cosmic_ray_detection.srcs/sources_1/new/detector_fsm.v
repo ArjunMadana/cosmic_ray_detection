@@ -159,6 +159,9 @@ reg        write_active;
 reg        write_aw_done;
 reg        write_w_done;
 reg [27:0] issued_addr;
+reg        read_active;
+reg        read_ar_done;
+reg [27:0] issued_read_addr;
 reg        mismatch_pending;
 reg [27:0] mismatch_addr;
 reg        scan_done_pending;
@@ -172,9 +175,11 @@ wire       report_busy;
 wire       report_done;
 wire       write_aw_done_now;
 wire       write_w_done_now;
+wire       read_ar_done_now;
 
 assign write_aw_done_now = write_aw_done || (awvalid && awready);
 assign write_w_done_now  = write_w_done  || (wvalid && wready);
+assign read_ar_done_now  = read_ar_done  || (arvalid && arready);
 
 uart_reporter u_reporter (
     .clk(clk),
@@ -252,13 +257,15 @@ always @(posedge clk) begin
         addr_capture_wr_addr <= 0;
         addr_capture_wr_data <= 0;
         addr_buf_rd_addr    <= 0;
-        addr_buf_rd_data    <= 0;
         addr_overflow       <= 0;
         addr_overflow_count <= 0;
         write_active        <= 0;
         write_aw_done       <= 0;
         write_w_done        <= 0;
         issued_addr         <= 0;
+        read_active         <= 0;
+        read_ar_done        <= 0;
+        issued_read_addr    <= 0;
         mismatch_pending    <= 0;
         mismatch_addr       <= 0;
         scan_done_pending   <= 0;
@@ -339,6 +346,9 @@ always @(posedge clk) begin
             write_active     <= 0;
             write_aw_done    <= 0;
             write_w_done     <= 0;
+            read_active      <= 0;
+            read_ar_done     <= 0;
+            issued_read_addr <= 0;
             buf_count        <= 0;
             buf_rd_count     <= 0;
             buf_rd_ptr       <= 0;
@@ -499,6 +509,10 @@ always @(posedge clk) begin
                         addr_overflow_count <= 0;
                         mismatch_pending    <= 0;
                         scan_done_pending   <= 0;
+                        read_active         <= 0;
+                        read_ar_done        <= 0;
+                        issued_read_addr    <= 0;
+                        arvalid             <= 0;
                     end else if (hold_tick_counter >= HOLD_SECOND_TICKS) begin
                         hold_tick_counter <= 0;
                         hold_sec_counter  <= hold_sec_counter + 1;
@@ -532,21 +546,30 @@ always @(posedge clk) begin
                         stream_read_wait  <= 0;
                         stream_addr_pending <= 0;
                     end else begin
-                        if (!arvalid && !rvalid) begin
-                            araddr  <= addr;
-                            arvalid <= 1;
-                        end
-                        if (arvalid && arready) arvalid <= 0;
-                        if (rvalid) begin
-                            if (rdata != active_pattern) begin
-                                mismatch_pending <= 1;
-                                mismatch_addr    <= addr;
+                        if (!read_active) begin
+                            araddr           <= addr;
+                            issued_read_addr <= addr;
+                            arvalid          <= 1;
+                            read_active      <= 1;
+                            read_ar_done     <= 0;
+                        end else begin
+                            if (arvalid && arready) begin
+                                arvalid      <= 0;
+                                read_ar_done <= 1;
                             end
-                            if (addr >= MEM_SIZE - 4) begin
-                                scan_done_pending <= 1;
-                                scan_done_hits    <= (rdata != active_pattern) ? hit_counter + 1 : hit_counter;
-                            end else begin
-                                addr <= addr + 4;
+                            if (rvalid && read_ar_done_now) begin
+                                read_active  <= 0;
+                                read_ar_done <= 0;
+                                if (rdata != active_pattern) begin
+                                    mismatch_pending <= 1;
+                                    mismatch_addr    <= issued_read_addr;
+                                end
+                                if (issued_read_addr >= MEM_SIZE - 4) begin
+                                    scan_done_pending <= 1;
+                                    scan_done_hits    <= (rdata != active_pattern) ? hit_counter + 1 : hit_counter;
+                                end else begin
+                                    addr <= issued_read_addr + 4;
+                                end
                             end
                         end
                     end
