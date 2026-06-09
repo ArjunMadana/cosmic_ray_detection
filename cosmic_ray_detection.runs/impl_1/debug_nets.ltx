@@ -1,0 +1,420 @@
+{
+    "ltx_root": {
+        "version": 4,
+        "minor": 0,
+        "ltx_data": [
+            {
+                "name": "EDA_PROBESET",
+                "active": true,
+                "debug_cores": [
+                    {
+                        "type": "XSDB_V3",
+                        "name": "dbg_hub",
+                        "spec": "labtools_xsdbm_v3",
+                        "clk_input_freq_hz": "100000000"
+                    },
+                    {
+                        "type": "VIO_V2",
+                        "name": "u_jtag_mailbox/u_vio_jtag_mailbox",
+                        "spec": "labtools_vio_v3",
+                        "ipName": "vio",
+                        "core_location": {
+                            "user_chain": 1,
+                            "slave_index": 0,
+                            "bscan_switch_index": 0
+                        },
+                        "uuid": "691D4C5EDF895ADEB57089EAEF3B0525",
+                        "pins": [
+                            {
+                                "name": "probe_in0",
+                                "id": 0,
+                                "type": "DATA",
+                                "direction": "IN",
+                                "isVector": true,
+                                "leftIndex": 0,
+                                "rightIndex": 7,
+                                "portIndex": 0,
+                                "nets": [
+                                    {
+                                        "name": "u_jtag_mailbox/vio_tx_data",
+                                        "isBus": true,
+                                        "subnets": [
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_data[7]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_data[6]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_data[5]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_data[4]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_data[3]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_data[2]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_data[1]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_data[0]"
+                                            }
+                                        ]
+                                    }
+                                ]
+                            },
+                            {
+                                "name": "probe_in1",
+                                "id": 1,
+                                "type": "DATA",
+                                "direction": "IN",
+                                "isVector": true,
+                                "leftIndex": 0,
+                                "rightIndex": 15,
+                                "portIndex": 1,
+                                "nets": [
+                                    {
+                                        "name": "u_jtag_mailbox/vio_tx_seq",
+                                        "isBus": true,
+                                        "subnets": [
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_seq[15]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_seq[14]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_seq[13]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_seq[12]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_seq[11]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_seq[10]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_seq[9]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_seq[8]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_seq[7]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_seq[6]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_seq[5]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_seq[4]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_seq[3]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_seq[2]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_seq[1]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_seq[0]"
+                                            }
+                                        ]
+                                    }
+                                ]
+                            },
+                            {
+                                "name": "probe_in2",
+                                "id": 2,
+                                "type": "DATA",
+                                "direction": "IN",
+                                "isVector": false,
+                                "leftIndex": 0,
+                                "rightIndex": 0,
+                                "portIndex": 2,
+                                "nets": [
+                                    {
+                                        "name": "u_jtag_mailbox/vio_tx_valid",
+                                        "isBus": false
+                                    }
+                                ]
+                            },
+                            {
+                                "name": "probe_in3",
+                                "id": 3,
+                                "type": "DATA",
+                                "direction": "IN",
+                                "isVector": true,
+                                "leftIndex": 0,
+                                "rightIndex": 11,
+                                "portIndex": 3,
+                                "nets": [
+                                    {
+                                        "name": "u_jtag_mailbox/vio_fifo_count",
+                                        "isBus": true,
+                                        "subnets": [
+                                            {
+                                                "name": "u_jtag_mailbox/vio_fifo_count[11]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_fifo_count[10]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_fifo_count[9]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_fifo_count[8]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_fifo_count[7]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_fifo_count[6]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_fifo_count[5]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_fifo_count[4]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_fifo_count[3]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_fifo_count[2]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_fifo_count[1]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_fifo_count[0]"
+                                            }
+                                        ]
+                                    }
+                                ]
+                            },
+                            {
+                                "name": "probe_in4",
+                                "id": 4,
+                                "type": "DATA",
+                                "direction": "IN",
+                                "isVector": false,
+                                "leftIndex": 0,
+                                "rightIndex": 0,
+                                "portIndex": 4,
+                                "nets": [
+                                    {
+                                        "name": "u_jtag_mailbox/vio_overflow",
+                                        "isBus": false
+                                    }
+                                ]
+                            },
+                            {
+                                "name": "probe_in5",
+                                "id": 5,
+                                "type": "DATA",
+                                "direction": "IN",
+                                "isVector": true,
+                                "leftIndex": 0,
+                                "rightIndex": 7,
+                                "portIndex": 5,
+                                "nets": [
+                                    {
+                                        "name": "u_jtag_mailbox/vio_cmd_seen_seq",
+                                        "isBus": true,
+                                        "subnets": [
+                                            {
+                                                "name": "u_jtag_mailbox/vio_cmd_seen_seq[7]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_cmd_seen_seq[6]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_cmd_seen_seq[5]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_cmd_seen_seq[4]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_cmd_seen_seq[3]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_cmd_seen_seq[2]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_cmd_seen_seq[1]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_cmd_seen_seq[0]"
+                                            }
+                                        ]
+                                    }
+                                ]
+                            },
+                            {
+                                "name": "probe_out0",
+                                "id": 6,
+                                "type": "DATA",
+                                "direction": "OUT",
+                                "isVector": true,
+                                "leftIndex": 0,
+                                "rightIndex": 7,
+                                "portIndex": 0,
+                                "nets": [
+                                    {
+                                        "name": "u_jtag_mailbox/vio_cmd_data",
+                                        "isBus": true,
+                                        "subnets": [
+                                            {
+                                                "name": "u_jtag_mailbox/vio_cmd_data[7]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_cmd_data[6]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_cmd_data[5]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_cmd_data[4]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_cmd_data[3]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_cmd_data[2]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_cmd_data[1]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_cmd_data[0]"
+                                            }
+                                        ]
+                                    }
+                                ]
+                            },
+                            {
+                                "name": "probe_out1",
+                                "id": 7,
+                                "type": "DATA",
+                                "direction": "OUT",
+                                "isVector": true,
+                                "leftIndex": 0,
+                                "rightIndex": 7,
+                                "portIndex": 1,
+                                "nets": [
+                                    {
+                                        "name": "u_jtag_mailbox/vio_cmd_seq",
+                                        "isBus": true,
+                                        "subnets": [
+                                            {
+                                                "name": "u_jtag_mailbox/vio_cmd_seq[7]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_cmd_seq[6]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_cmd_seq[5]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_cmd_seq[4]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_cmd_seq[3]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_cmd_seq[2]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_cmd_seq[1]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_cmd_seq[0]"
+                                            }
+                                        ]
+                                    }
+                                ]
+                            },
+                            {
+                                "name": "probe_out2",
+                                "id": 8,
+                                "type": "DATA",
+                                "direction": "OUT",
+                                "isVector": true,
+                                "leftIndex": 0,
+                                "rightIndex": 15,
+                                "portIndex": 2,
+                                "nets": [
+                                    {
+                                        "name": "u_jtag_mailbox/vio_tx_ack_seq",
+                                        "isBus": true,
+                                        "subnets": [
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_ack_seq[15]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_ack_seq[14]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_ack_seq[13]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_ack_seq[12]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_ack_seq[11]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_ack_seq[10]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_ack_seq[9]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_ack_seq[8]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_ack_seq[7]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_ack_seq[6]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_ack_seq[5]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_ack_seq[4]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_ack_seq[3]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_ack_seq[2]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_ack_seq[1]"
+                                            },
+                                            {
+                                                "name": "u_jtag_mailbox/vio_tx_ack_seq[0]"
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+}

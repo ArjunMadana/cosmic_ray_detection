@@ -52,10 +52,28 @@ proc open_first_hw_target {} {
     set target [lindex $targets 0]
     puts "Opening hw_target: $target"
     catch {
-        set_property PARAM.FREQUENCY 6000000 $target
-        puts "Set JTAG target frequency to 6000000 Hz."
+        set_property PARAM.FREQUENCY 1000000 $target
+        puts "Set JTAG target frequency to 1000000 Hz."
     }
     open_hw_target $target
+}
+
+proc refresh_until_vio {device} {
+    set masks {1 2 4 8 15}
+    foreach mask $masks {
+        puts "Scanning debug cores with BSCAN_SWITCH_USER_MASK=$mask ..."
+        catch {set_property BSCAN_SWITCH_USER_MASK $mask $device}
+        for {set attempt 0} {$attempt < 6} {incr attempt} {
+            after 1500
+            catch {refresh_hw_device $device}
+            set vio_list [get_hw_vios -quiet -of_objects $device]
+            if {[llength $vio_list] != 0} {
+                puts "Detected VIO with BSCAN_SWITCH_USER_MASK=$mask."
+                return $vio_list
+            }
+        }
+    }
+    return {}
 }
 
 proc parse_vio_value {value} {
@@ -142,19 +160,15 @@ if {$program_first} {
         puts "Using debug probes file: $ltxfile"
         set_property PROBES.FILE $ltxfile $device
     }
-    set_property BSCAN_SWITCH_USER_MASK 1 $device
     program_hw_devices $device
     puts "Waiting for fabric/debug clocks before scanning VIO cores..."
-    after 3000
+    after 8000
 }
 if {[file exists $ltxfile]} {
     puts "Using debug probes file: $ltxfile"
     set_property PROBES.FILE $ltxfile $device
 }
-set_property BSCAN_SWITCH_USER_MASK 1 $device
-refresh_hw_device $device
-
-set vio_list [get_hw_vios -of_objects $device]
+set vio_list [refresh_until_vio $device]
 if {[llength $vio_list] == 0} {
     puts "ERROR: No VIO cores found. Rebuild with build_jtag_mailbox_board.bat and program with program_board.bat."
     exit 1

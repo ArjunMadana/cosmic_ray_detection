@@ -47,11 +47,12 @@ reg overflow = 1'b0;
 reg [15:0] tx_seq = 16'd1;
 reg [7:0]  tx_present_data = 8'd0;
 reg        tx_present_valid = 1'b0;
+reg        tx_toggle_ui = 1'b0;
 reg [7:0]  cmd_seen_seq = 8'd0;
-reg [15:0] last_ack_seq = 16'd0;
 
-reg [15:0] ack_seq_ui_meta = 16'd0;
-reg [15:0] ack_seq_ui = 16'd0;
+reg        tx_ack_toggle_ui_meta = 1'b0;
+reg        tx_ack_toggle_ui = 1'b0;
+reg        tx_ack_toggle_ui_last = 1'b0;
 
 reg        cmd_toggle_ui_meta = 1'b0;
 reg        cmd_toggle_ui = 1'b0;
@@ -64,11 +65,17 @@ reg [7:0]  cmd_seq_ui = 8'd0;
 // VIO-clock domain: present detector telemetry to Vivado and latch command
 // bytes from the VIO output probes.
 reg [7:0]  tx_data_vio_meta = 8'd0;
+reg [7:0]  tx_data_vio_sync = 8'd0;
 reg [7:0]  tx_data_vio = 8'd0;
 reg [15:0] tx_seq_vio_meta = 16'd1;
+reg [15:0] tx_seq_vio_sync = 16'd1;
 reg [15:0] tx_seq_vio = 16'd1;
-reg        tx_valid_vio_meta = 1'b0;
 reg        tx_valid_vio = 1'b0;
+reg        tx_toggle_vio_meta = 1'b0;
+reg        tx_toggle_vio = 1'b0;
+reg        tx_toggle_vio_last = 1'b0;
+reg        tx_ack_toggle_vio = 1'b0;
+reg [15:0] tx_ack_seq_vio_last = 16'd0;
 reg [11:0] fifo_count_vio_meta = 12'd0;
 reg [11:0] fifo_count_vio = 12'd0;
 reg        overflow_vio_meta = 1'b0;
@@ -85,8 +92,8 @@ wire fifo_load_present = !tx_present_valid && fifo_count != 0;
 wire fifo_push = tx_valid && (fifo_count != FIFO_DEPTH_COUNT || fifo_load_present);
 
 always @(posedge clk) begin
-    ack_seq_ui_meta <= vio_tx_ack_seq;
-    ack_seq_ui <= ack_seq_ui_meta;
+    tx_ack_toggle_ui_meta <= tx_ack_toggle_vio;
+    tx_ack_toggle_ui <= tx_ack_toggle_ui_meta;
 
     cmd_toggle_ui_meta <= cmd_toggle_vio;
     cmd_toggle_ui <= cmd_toggle_ui_meta;
@@ -103,8 +110,9 @@ always @(posedge clk) begin
         tx_seq <= 16'd1;
         tx_present_data <= 8'd0;
         tx_present_valid <= 1'b0;
+        tx_toggle_ui <= 1'b0;
         cmd_seen_seq <= 8'd0;
-        last_ack_seq <= 16'd0;
+        tx_ack_toggle_ui_last <= tx_ack_toggle_ui;
         cmd_toggle_ui_last <= cmd_toggle_ui;
         rx_data <= 8'd0;
         rx_valid <= 1'b0;
@@ -131,8 +139,9 @@ always @(posedge clk) begin
             tx_present_data <= fifo_mem[rd_ptr];
             rd_ptr <= rd_ptr + 1'b1;
             tx_present_valid <= 1'b1;
-        end else if (tx_present_valid && ack_seq_ui == tx_seq && ack_seq_ui != last_ack_seq) begin
-            last_ack_seq <= ack_seq_ui;
+            tx_toggle_ui <= ~tx_toggle_ui;
+        end else if (tx_present_valid && tx_ack_toggle_ui != tx_ack_toggle_ui_last) begin
+            tx_ack_toggle_ui_last <= tx_ack_toggle_ui;
             tx_present_valid <= 1'b0;
             tx_seq <= tx_seq + 1'b1;
         end
@@ -154,11 +163,11 @@ assign vio_cmd_seen_seq = cmd_seen_vio;
 
 always @(posedge vio_clk) begin
     tx_data_vio_meta <= tx_present_data;
-    tx_data_vio <= tx_data_vio_meta;
+    tx_data_vio_sync <= tx_data_vio_meta;
     tx_seq_vio_meta <= tx_seq;
-    tx_seq_vio <= tx_seq_vio_meta;
-    tx_valid_vio_meta <= tx_present_valid;
-    tx_valid_vio <= tx_valid_vio_meta;
+    tx_seq_vio_sync <= tx_seq_vio_meta;
+    tx_toggle_vio_meta <= tx_toggle_ui;
+    tx_toggle_vio <= tx_toggle_vio_meta;
     fifo_count_vio_meta <= fifo_count[FIFO_BITS-1:0];
     fifo_count_vio <= fifo_count_vio_meta;
     overflow_vio_meta <= overflow;
@@ -171,11 +180,30 @@ always @(posedge vio_clk) begin
         cmd_data_hold_vio <= 8'd0;
         cmd_seq_hold_vio <= 8'd0;
         cmd_toggle_vio <= 1'b0;
-    end else if (vio_cmd_seq != last_cmd_seq_vio) begin
-        last_cmd_seq_vio <= vio_cmd_seq;
-        cmd_data_hold_vio <= vio_cmd_data;
-        cmd_seq_hold_vio <= vio_cmd_seq;
-        cmd_toggle_vio <= ~cmd_toggle_vio;
+        tx_data_vio <= 8'd0;
+        tx_seq_vio <= 16'd1;
+        tx_valid_vio <= 1'b0;
+        tx_toggle_vio_last <= tx_toggle_vio;
+        tx_ack_toggle_vio <= 1'b0;
+        tx_ack_seq_vio_last <= 16'd0;
+    end else begin
+        if (tx_toggle_vio != tx_toggle_vio_last) begin
+            tx_toggle_vio_last <= tx_toggle_vio;
+            tx_data_vio <= tx_data_vio_sync;
+            tx_seq_vio <= tx_seq_vio_sync;
+            tx_valid_vio <= 1'b1;
+        end else if (tx_valid_vio && vio_tx_ack_seq == tx_seq_vio && vio_tx_ack_seq != tx_ack_seq_vio_last) begin
+            tx_ack_seq_vio_last <= vio_tx_ack_seq;
+            tx_valid_vio <= 1'b0;
+            tx_ack_toggle_vio <= ~tx_ack_toggle_vio;
+        end
+
+        if (vio_cmd_seq != last_cmd_seq_vio) begin
+            last_cmd_seq_vio <= vio_cmd_seq;
+            cmd_data_hold_vio <= vio_cmd_data;
+            cmd_seq_hold_vio <= vio_cmd_seq;
+            cmd_toggle_vio <= ~cmd_toggle_vio;
+        end
     end
 end
 

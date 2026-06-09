@@ -51,9 +51,10 @@
     );
     
     // Internal wires
+    wire        sys_clock_ibuf;
+    wire        sys_clock_buf;
     wire        ui_clk;
     wire        jtag_clk;
-    wire        jtag_cfgmclk;
     wire        calib_complete;
     wire [11:0] device_temp;
     wire        refresh_tick_out;
@@ -99,6 +100,16 @@
     localparam UI_CLK_HZ = 150_000_000;
     localparam UART_BAUD = 115_200;
 
+    IBUF u_sys_clock_ibuf (
+        .I(sys_clock),
+        .O(sys_clock_ibuf)
+    );
+
+    BUFG u_sys_clock_bufg (
+        .I(sys_clock_ibuf),
+        .O(sys_clock_buf)
+    );
+
     reg [7:0] boot_rst_count = 8'd0;
     wire      boot_rst;
     assign boot_rst = !boot_rst_count[7];
@@ -109,30 +120,11 @@
         end
     end
 
-    STARTUPE2 #(
-        .PROG_USR("FALSE"),
-        .SIM_CCLK_FREQ(0.0)
-    ) u_jtag_startupe2 (
-        .CFGCLK(),
-        .CFGMCLK(jtag_cfgmclk),
-        .EOS(),
-        .PREQ(),
-        .CLK(1'b0),
-        .GSR(1'b0),
-        .GTS(1'b0),
-        .KEYCLEARB(1'b1),
-        .PACK(1'b0),
-        .USRCCLKO(1'b0),
-        .USRCCLKTS(1'b1),
-        .USRDONEO(1'b1),
-        .USRDONETS(1'b1)
-    );
-
-    assign jtag_clk = jtag_cfgmclk;
+    assign jtag_clk = sys_clock_buf;
     
     // Block design instance
     cosmic_bd_wrapper u_bd (
-        .sys_clock          (sys_clock),
+        .sys_clock          (sys_clock_buf),
         .reset              (~reset),
         .DDR3_0_addr        (ddr3_addr),
         .DDR3_0_ba          (ddr3_ba),
