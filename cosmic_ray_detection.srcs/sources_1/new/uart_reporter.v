@@ -25,6 +25,7 @@ module uart_reporter (
     input  wire [12:0] addr_count,
     input  wire        addr_overflow,
     input  wire [27:0] addr_value,
+    input wire [31:0] xor_mask,
     input  wire [31:0] flip_count,
     input  wire [11:0] temp_raw
 );
@@ -51,6 +52,7 @@ reg [1:0]  refresh_q;
 reg [12:0] addr_count_q;
 reg        addr_overflow_q;
 reg [27:0] addr_value_q;
+reg [31:0] xor_mask_q;
 reg [31:0] flip_count_q;
 reg [11:0] temp_raw_q;
 
@@ -152,7 +154,7 @@ function [7:0] message_len;
             PK_REPORT:   message_len = 8'd34;
             PK_ADDRHDR:  message_len = 8'd18;
             PK_TEMP:     message_len = 8'd10;
-            PK_ADDRLINE: message_len = 8'd9;
+            PK_ADDRLINE: message_len = 8'd22;
             default:     message_len = 8'd2;
         endcase
     end
@@ -218,9 +220,23 @@ function [7:0] byte_at;
                 endcase
             end
             PK_ADDRLINE: begin
-                if (pos <= 8'd6) byte_at = hex28_at(addr_value_q, pos);
-                else if (pos == 8'd7) byte_at = 8'h0D;
-                else byte_at = 8'h0A;
+                case (pos)
+                    8'd0: byte_at = "E";
+                    8'd1: byte_at = "R";
+                    8'd2: byte_at = "R";
+                    8'd3: byte_at = ":";
+                    
+                    8'd4, 8'd5, 8'd6, 8'd7, 8'd8, 8'd9, 8'd10:
+                        byte_at = hex28_at(addr_value_q, pos - 8'd4);
+                    
+                    8'd11: byte_at = ":";
+                    
+                    8'd12, 8'd13, 8'd14, 8'd15, 8'd16, 8'd17, 8'd18, 8'd19:
+                        byte_at = hex28_at(xor_mask_q, pos - 8'd12);
+                        
+                   8'd20: byte_at = 8'h0D;
+                   default: byte_at = 8'h0A;
+                endcase
             end
             PK_REPORT: begin
                 case (pos)
@@ -267,6 +283,7 @@ always @(posedge clk) begin
         active_kind <= 0;
         active_len <= 0;
         idx        <= 0;
+        xor_mask_q <= 0;
     end else begin
         done <= 0;
 
@@ -280,7 +297,7 @@ always @(posedge clk) begin
                 active_kind <= kind;
                 active_len <= message_len(kind);
                 idx        <= 1;
-                uart_data  <= (kind == PK_ADDRLINE) ? hex_digit(addr_value[27:24]) : byte_at(kind, 8'd0);
+                uart_data  <= byte_at(kind, 8'd0);
                 uart_valid <= 1;
 
                 hold3_q <= hold_dig3;
@@ -293,6 +310,7 @@ always @(posedge clk) begin
                 addr_count_q <= addr_count;
                 addr_overflow_q <= addr_overflow;
                 addr_value_q <= addr_value;
+                xor_mask_q <= xor_mask;
                 flip_count_q <= flip_count;
                 temp_raw_q <= temp_raw;
             end else if (busy && uart_ready) begin

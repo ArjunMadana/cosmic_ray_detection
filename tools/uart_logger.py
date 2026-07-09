@@ -47,6 +47,7 @@ READY_RE     = re.compile(r'^READY$')
 BOOT_RE      = re.compile(r'^BOOT$')
 ADDRS_HDR_RE = re.compile(r'^ADDRS:([0-9A-Fa-f]{4})(?:\s+OVF:([01]))?$')
 ADDR_LINE_RE = re.compile(r'^([0-9A-Fa-f]{7})$')
+ERR_LINE_RE  = re.compile(r'^ERR:([0-9A-Fa-f]{7}):([0-9A-Fa-f]{8})$')
 DIAG_RE      = re.compile(
     r'DIAG:F1:([0-9A-Fa-f]{8}) F2:([0-9A-Fa-f]{8}) SC:([0-9A-Fa-f]{8}) '
     r'BERR:([0-9A-Fa-f]{8}) RERR:([0-9A-Fa-f]{8})'
@@ -200,8 +201,8 @@ def parse_line(raw_bytes, ts_unix):
 
 class DataStore:
     CSV_FIELDS = ['timestamp', 'iteration', 'hold_s', 'refresh_rate', 'pattern',
-                  'flip_count', 'addr_count', 'addr_complete', 'addr_overflow',
-                  'temp_c', 'experiment']
+                  'flip_count', 'bit_flip_count', 'addr_count', 'addr_complete',
+                  'addr_overflow', 'temp_c', 'experiment']
 
     def __init__(self, output_dir, name, description, start_time_iso):
         self.name = name
@@ -262,8 +263,9 @@ class DataStore:
                 'hold_s':       record['hold_s'],
                 'refresh_rate': self.refresh_rate,
                 'pattern':      record.get('pattern', self.pattern),
-                'flip_count':   record['flip_count'],
-                'addr_count':   len(record.get('addrs', [])),
+                'flip_count':       record['flip_count'],
+                'bit_flip_count': record.get('bit_flip_count', record['flip_count']),
+                'addr_count':       len(record.get('addrs', [])),
                 'addr_complete': record.get('addr_complete', ''),
                 'addr_overflow': record.get('addr_overflow', False),
                 'temp_c':       record.get('temp_c', self.temp_c),
@@ -333,6 +335,7 @@ class ReplayStore:
                 'refresh_rate': self.refresh_rate,
                 'pattern': record.get('pattern', self.pattern),
                 'flip_count': record['flip_count'],
+                'bit_flip_count': record.get('bit_flip_count', record['flip_count']),
                 'addr_count': len(record.get('addrs', [])),
                 'addr_complete': record.get('addr_complete', ''),
                 'addr_overflow': record.get('addr_overflow', False),
@@ -749,8 +752,10 @@ class DosimeterApp:
         self._connected      = False
         self._board_ready    = False  # True after READY received from board
         self._running        = False  # True after Start clicked and G sent
-        self._addr_remaining = 0      # address lines still expected from ADDRS header
+        self._addr_remaining = 0      # address/error lines still expected from ADDRS header
         self._addr_buf       = []     # addresses collected for current cycle
+        self._err_buf        = []     # per-address XOR masks collected for current cycle
+        self._addr_bit_totals = {}    # addr -> cumulative bit flips across current session/replay
         self._addr_overflow  = False
         self._bg             = BackgroundModel()
         self._rare_records   = []     # (iteration, rare_count, clusters) for de-noised plot
@@ -833,10 +838,12 @@ class DosimeterApp:
         tab1 = ttk.Frame(nb)
         tab2 = ttk.Frame(nb)
         tab3 = ttk.Frame(nb)
+        tab4 = ttk.Frame(nb)
         nb.add(tab1, text='Raw flip count')
         nb.add(tab2, text='De-noised (rare events)')
         nb.add(tab3, text='Address raster')
-        for tab in (tab1, tab2, tab3):
+        nb.add(tab4, text='Bit flips by address')
+        for tab in (tab1, tab2, tab3, tab4):
             tab.columnconfigure(0, weight=1)
             tab.rowconfigure(0, weight=1)
 
@@ -862,6 +869,13 @@ class DosimeterApp:
         self._canvas3 = FigureCanvasTkAgg(self._fig3, master=tab3)
         self._canvas3.get_tk_widget().grid(row=0, column=0, sticky='nsew')
         self._draw_empty_raster()
+
+        # Tab 4 — cumulative bit flips by address
+        self._fig4 = Figure(figsize=(10, 4), tight_layout=True)
+        self._ax4  = self._fig4.add_subplot(111)
+        self._canvas4 = FigureCanvasTkAgg(self._fig4, master=tab4)
+        self._canvas4.get_tk_widget().grid(row=0, column=0, sticky='nsew')
+        self._draw_empty_addr_bits()
 
         # ── Row 3: status bar ──────────────────────────────────────────────
         sf = ttk.Frame(self.root, relief='sunken', borderwidth=1)
@@ -985,6 +999,7 @@ class DosimeterApp:
     def _clear_address_capture(self):
         self._addr_remaining = 0
         self._addr_buf = []
+        self._err_buf = []
         self._addr_overflow = False
 
     def _reset_address_quality(self):
@@ -1030,6 +1045,13 @@ class DosimeterApp:
         self._ax3.set_ylabel('Iteration')
         self._ax3.set_title('Address raster — waiting for data')
         self._canvas3.draw_idle()
+
+    def _draw_empty_addr_bits(self):
+        self._ax4.clear()
+        self._ax4.set_xlabel('Address')
+        self._ax4.set_ylabel('Cumulative bit flips')
+        self._ax4.set_title('Bit flips by address — waiting for ERR records')
+        self._canvas4.draw_idle()
 
     # -----------------------------------------------------------------------
     # Connection
@@ -1080,6 +1102,7 @@ class DosimeterApp:
         self._rare_records.clear()
         self._raster_records.clear()
         self._temp_records.clear()
+        self._addr_bit_totals.clear()
         self._bg   = BackgroundModel()
         self._hang = HangDetector()
         self._clear_address_capture()
@@ -1087,6 +1110,7 @@ class DosimeterApp:
         self._draw_empty_plot()
         self._draw_empty_denoised()
         self._draw_empty_raster()
+        self._draw_empty_addr_bits()
 
         # Send initial conditions before Go so first cycle uses GUI values
         self._reader.write(f'H{hold_val}\n'.encode('ascii'))
@@ -1161,10 +1185,23 @@ class DosimeterApp:
                             line = raw.decode('ascii', errors='replace').strip()
                         except Exception:
                             continue
-                        # Address body lines are collected before normal parsing
+                        # Address/error body lines are collected before normal parsing
                         if self._addr_remaining > 0:
+                            m = ERR_LINE_RE.match(line)
+                            if m:
+                                addr = int(m.group(1), 16)
+                                mask = int(m.group(2), 16)
+                                self._addr_buf.append(addr)
+                                self._err_buf.append({
+                                    'addr': addr,
+                                    'mask': mask,
+                                    'bit_flips': mask.bit_count(),
+                                })
+                                self._addr_remaining -= 1
+                                continue
                             m = ADDR_LINE_RE.match(line)
                             if m:
+                                # Backward-compatible support for older firmware that reports address only.
                                 self._addr_buf.append(int(m.group(1), 16))
                                 self._addr_remaining -= 1
                                 continue
@@ -1172,7 +1209,7 @@ class DosimeterApp:
                                 # Unexpected line mid-stream; drop partial capture before parsing it.
                                 self._log_append(
                                     'address stream aborted before expected count; '
-                                    'dropping partial address list',
+                                    'dropping partial address/error list',
                                     'alert')
                                 self._clear_address_capture()
                         record = parse_line(raw, ts_unix)
@@ -1204,6 +1241,7 @@ class DosimeterApp:
         elif record['type'] == 'ADDRS_HDR':
             self._addr_remaining = record['count']
             self._addr_buf       = []
+            self._err_buf        = []
             self._addr_overflow  = record.get('addr_overflow', False)
             return
 
@@ -1250,8 +1288,14 @@ class DosimeterApp:
         elif record['type'] == 'FLIP':
             self._hang.reset(record['hold_s'])
             record['addrs'] = list(self._addr_buf)
+            record['addr_errors'] = list(self._err_buf)
+            record['bit_flip_count'] = (
+                sum(e['bit_flips'] for e in record['addr_errors'])
+                if record['addr_errors'] else record['flip_count']
+            )
             record['addr_overflow'] = self._addr_overflow
             self._addr_buf       = []
+            self._err_buf        = []
             self._addr_remaining = 0
             self._addr_overflow  = False
             addrs = record['addrs']
@@ -1272,6 +1316,11 @@ class DosimeterApp:
             if self._sweep_win and self._sweep_win._running:
                 self._sweep_win.on_flip(record)
             if addr_complete:
+                for err in record.get('addr_errors', []):
+                    addr = err['addr']
+                    self._addr_bit_totals[addr] = (
+                        self._addr_bit_totals.get(addr, 0) + err['bit_flips']
+                    )
                 self._bg.update(addrs)
                 hot, rare = self._bg.classify(addrs)
                 clusters  = self._bg.find_clusters(rare)
@@ -1314,11 +1363,13 @@ class DosimeterApp:
             is_alert = self._alert is not None and fc > self._alert
             tag = 'alert' if is_alert else 'flip'
             n_addrs = len(record.get('addrs', []))
+            bit_flips = record.get('bit_flip_count')
+            bits_str = f"  bits={bit_flips:>10,}" if bit_flips is not None else ""
             ovf_str = "  ADDR_OVF" if record.get('addr_overflow') else ""
             temp_str = f"  temp={self._store.temp_c}°C" if self._store.temp_c is not None else ""
             self._log_append(
                 f"[{record['timestamp'][11:19]}] #{self._store.iteration:>4}  "
-                f"flips={fc:>10,}  addrs={n_addrs:>5}  hold={record['hold_s']}s  "
+                f"flips={fc:>10,}{bits_str}  addrs={n_addrs:>5}  hold={record['hold_s']}s  "
                 f"pattern={record.get('pattern', self._store.pattern)}{temp_str}{ovf_str}", tag)
             if fc != n_addrs:
                 self._log_append(
@@ -1339,6 +1390,10 @@ class DosimeterApp:
                 self._redraw_raster()
             else:
                 self._draw_empty_raster()
+            if self._addr_bit_totals:
+                self._redraw_addr_bit_totals()
+            else:
+                self._draw_empty_addr_bits()
             self._last_plot_error = None
         except Exception as e:
             msg = str(e)
@@ -1539,6 +1594,32 @@ class DosimeterApp:
             self._fig3.tight_layout()
         self._canvas3.draw_idle()
 
+    def _redraw_addr_bit_totals(self):
+        items = sorted(self._addr_bit_totals.items(), key=lambda kv: kv[1], reverse=True)[:30]
+        if not items:
+            self._draw_empty_addr_bits()
+            return
+
+        labels = [f'0x{addr:07X}' for addr, _ in items]
+        totals = [total for _, total in items]
+
+        ax = self._ax4
+        ax.clear()
+        x = list(range(len(items)))
+        ax.bar(x, totals)
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels, rotation=90, fontsize=7)
+        ax.set_xlabel('Address')
+        ax.set_ylabel('Cumulative bit flips')
+        ax.set_title('Top addresses by cumulative bit flips')
+        ymax = max(totals) if totals else 1
+        for i, total in enumerate(totals):
+            ax.text(i, total + ymax * 0.02, str(total), ha='center', va='bottom', fontsize=7)
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', UserWarning)
+            self._fig4.tight_layout()
+        self._canvas4.draw_idle()
+
     # -----------------------------------------------------------------------
     # Controls
     # -----------------------------------------------------------------------
@@ -1618,12 +1699,14 @@ class DosimeterApp:
         self._rare_records.clear()
         self._raster_records.clear()
         self._temp_records.clear()
+        self._addr_bit_totals.clear()
         self._bg = BackgroundModel()
         self._clear_address_capture()
         self._reset_address_quality()
         self._draw_empty_plot()
         self._draw_empty_denoised()
         self._draw_empty_raster()
+        self._draw_empty_addr_bits()
         self._log_append(f'Replaying {path}', 'status')
 
         try:
@@ -1657,17 +1740,36 @@ class DosimeterApp:
                     elif record.get('type') == 'ADDRS_HDR':
                         self._addr_remaining = record.get('count', 0)
                         self._addr_buf = []
+                        self._err_buf = []
                         self._addr_overflow = record.get('addr_overflow', False)
                         self._store.ingest(record)
                     elif record.get('type') == 'ADDR':
                         if self._addr_remaining > 0:
-                            self._addr_buf.append(record.get('addr'))
+                            addr = record.get('addr')
+                            self._addr_buf.append(addr)
+                            if record.get('mask') is not None:
+                                mask = record.get('mask')
+                                self._err_buf.append({
+                                    'addr': addr,
+                                    'mask': mask,
+                                    'bit_flips': record.get('bit_flips', int(mask).bit_count()),
+                                })
                             self._addr_remaining -= 1
                         self._store.ingest(record)
                     elif record.get('type') == 'FLIP':
                         if 'addrs' not in record:
                             record['addrs'] = list(self._addr_buf)
+                            record['addr_errors'] = list(self._err_buf)
+                            record['bit_flip_count'] = (
+                                sum(e['bit_flips'] for e in record['addr_errors'])
+                                if record['addr_errors'] else record.get('flip_count', 0)
+                            )
                             record['addr_overflow'] = self._addr_overflow
+                        elif 'bit_flip_count' not in record and record.get('addr_errors'):
+                            record['bit_flip_count'] = sum(
+                                e.get('bit_flips', int(e.get('mask', 0)).bit_count())
+                                for e in record.get('addr_errors', [])
+                            )
                         addrs = record.get('addrs', [])
                         iteration = self._store.iteration + 1
                         addr_complete = (
@@ -1684,6 +1786,11 @@ class DosimeterApp:
                             self._addr_overflow_cycles += 1
                         self._update_address_quality_label()
                         if addr_complete:
+                            for err in record.get('addr_errors', []):
+                                addr = err.get('addr')
+                                bits = err.get('bit_flips')
+                                if addr is not None and bits is not None:
+                                    self._addr_bit_totals[addr] = self._addr_bit_totals.get(addr, 0) + bits
                             self._bg.update(addrs)
                             hot, rare = self._bg.classify(addrs)
                             clusters = self._bg.find_clusters(rare)
@@ -1709,6 +1816,10 @@ class DosimeterApp:
             self._redraw_denoised()
         if self._raster_records:
             self._redraw_raster()
+        if self._addr_bit_totals:
+            self._redraw_addr_bit_totals()
+        else:
+            self._draw_empty_addr_bits()
         self._conn_btn.config(state='disabled')
 
     # -----------------------------------------------------------------------

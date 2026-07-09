@@ -141,6 +141,8 @@ reg        go_flag;
 reg        reset_flag;
 
 (* ram_style = "block" *) reg [27:0] addr_buf [0:4095];
+(* ram_style = "block" *) reg[31:0] xor_buf [0:4095];
+
 reg [12:0] buf_count;
 reg [12:0] buf_rd_count;
 reg [11:0] buf_rd_ptr;
@@ -150,6 +152,10 @@ reg        stream_addr_pending;
 reg        addr_capture_pending;
 reg [11:0] addr_capture_wr_addr;
 reg [27:0] addr_capture_wr_data;
+reg [31:0] mismatch_mask;
+reg [31:0] addr_capture_wr_mask;
+reg [31:0] xor_buf_rd_data;
+reg [31:0] report_xor_mask;
 reg [11:0] addr_buf_rd_addr;
 reg [27:0] addr_buf_rd_data;
 reg        addr_overflow;
@@ -201,6 +207,7 @@ uart_reporter u_reporter (
     .addr_count(buf_count),
     .addr_overflow(addr_overflow),
     .addr_value(report_addr),
+    .xor_mask(report_xor_mask),
     .flip_count(report_shift),
     .temp_raw(temp_shift)
 );
@@ -208,8 +215,10 @@ uart_reporter u_reporter (
 always @(posedge clk) begin
     if (!rst && addr_capture_pending) begin
         addr_buf[addr_capture_wr_addr] <= addr_capture_wr_data;
+        xor_buf[addr_capture_wr_addr] <= addr_capture_wr_mask;
     end
     addr_buf_rd_data <= addr_buf[addr_buf_rd_addr];
+    xor_buf_rd_data <= xor_buf[addr_buf_rd_addr];
 end
 
 always @(posedge clk) begin
@@ -529,6 +538,7 @@ always @(posedge clk) begin
                             addr_capture_pending <= 1;
                             addr_capture_wr_addr <= buf_count[11:0];
                             addr_capture_wr_data <= mismatch_addr;
+                            addr_capture_wr_mask <= mismatch_mask;
                             buf_count            <= buf_count + 1;
                         end else begin
                             addr_overflow       <= 1;
@@ -563,6 +573,7 @@ always @(posedge clk) begin
                                 if (rdata != active_pattern) begin
                                     mismatch_pending <= 1;
                                     mismatch_addr    <= issued_read_addr;
+                                    mismatch_mask <= rdata ^ active_pattern;
                                 end
                                 if (issued_read_addr >= MEM_SIZE - 4) begin
                                     scan_done_pending <= 1;
@@ -583,6 +594,7 @@ always @(posedge clk) begin
                     end else if (stream_read_wait != 0) begin
                         if (stream_read_wait == 1) begin
                             report_addr         <= addr_buf_rd_data;
+                            report_xor_mask <= xor_buf_rd_data;
                             stream_addr_pending <= 1;
                         end
                         stream_read_wait <= stream_read_wait - 1;
