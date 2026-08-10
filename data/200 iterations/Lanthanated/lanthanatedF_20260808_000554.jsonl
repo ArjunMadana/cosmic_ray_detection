@@ -1,0 +1,2 @@
+{"type": "INTERVAL", "timestamp": "2026-08-08T05:05:54.814063+00:00", "ts_unix": 1786165554.8140628, "hold_s": 5, "raw": "INTERVAL:0005s"}
+{"type": "PATTERN", "timestamp": "2026-08-08T05:05:54.814063+00:00", "ts_unix": 1786165554.8140628, "pattern": "FF", "raw": "PATTERN:FF"}

@@ -1,0 +1,4 @@
+# experiment: lanthanatedF
+# description: 
+# start_time: 2026-08-08T05:05:54.795552+00:00
+timestamp,iteration,hold_s,refresh_rate,pattern,flip_count,bit_flip_count,addr_count,addr_complete,addr_overflow,temp_c,experiment
