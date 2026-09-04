@@ -232,7 +232,7 @@ function [7:0] byte_at;
                     8'd11: byte_at = ":";
                     
                     8'd12, 8'd13, 8'd14, 8'd15, 8'd16, 8'd17, 8'd18, 8'd19:
-                        byte_at = hex28_at(xor_mask_q, pos - 8'd12);
+                        byte_at = hex32_at(xor_mask_q, pos - 8'd12);
                         
                    8'd20: byte_at = 8'h0D;
                    default: byte_at = 8'h0A;
