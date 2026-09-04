@@ -94,8 +94,9 @@ if {[catch {ensure_project_open}]} {
     return
 }
 
-set proj_dir [get_property DIRECTORY [current_project]]
-set bd_root  [file normalize "$proj_dir/cosmic_ray_detection.gen/sources_1/bd/cosmic_bd"]
+set script_dir [file dirname [file normalize [info script]]]
+set proj_dir    [file dirname $script_dir]
+set bd_root     [file normalize "$proj_dir/cosmic_ray_detection.gen/sources_1/bd/cosmic_bd"]
 set synth_v  "$bd_root/synth/cosmic_bd.v"
 set wrapper  "$bd_root/hdl/cosmic_bd_wrapper.v"
 set mig_root "$bd_root/ip/cosmic_bd_mig_7series_0_2/cosmic_bd_mig_7series_0_2/user_design/rtl"
@@ -163,10 +164,29 @@ patch_file $wrapper {
 }
 
 patch_file $mig_top {
-    replace_once txt "  input         sys_clk_i,\n  // Single-ended iodelayctrl clk" \
-        "  input         sys_clk_i,\n  input         ext_refresh_tick,\n  // Single-ended iodelayctrl clk" \
-        "MIG top ext_refresh_tick input"
-    replace_once txt "    .ui_clk                         (ui_clk)," \
+    if {[string first "input         ext_refresh_tick" $txt] >= 0 ||
+        [string first "input wire    ext_refresh_tick" $txt] >= 0 ||
+        [string first "input ext_refresh_tick" $txt] >= 0} {
+        puts "  MIG top ext_refresh_tick input already patched."
+    } elseif {[string first "  input         sys_clk_i," $txt] >= 0} {
+        replace_once txt "  input         sys_clk_i," \
+            "  input         sys_clk_i,\n  input         ext_refresh_tick," \
+            "MIG top ext_refresh_tick input"
+    } elseif {[string first "  input wire    sys_clk_i," $txt] >= 0} {
+        replace_once txt "  input wire    sys_clk_i," \
+            "  input wire    sys_clk_i,\n  input wire    ext_refresh_tick," \
+            "MIG top ext_refresh_tick input"
+    } elseif {[string first "  input sys_clk_i," $txt] >= 0} {
+        replace_once txt "  input sys_clk_i," \
+            "  input sys_clk_i,\n  input ext_refresh_tick," \
+            "MIG top ext_refresh_tick input"
+    } else {
+        puts "ERROR: Could not patch MIG top ext_refresh_tick input. Inspect $mig_top around sys_clk_i."
+        return -code error
+    }
+
+    replace_once_if_missing txt "    .ext_refresh_tick               (ext_refresh_tick)," \
+        "    .ui_clk                         (ui_clk)," \
         "    .ext_refresh_tick               (ext_refresh_tick),\n    .ui_clk                         (ui_clk)," \
         "MIG top core ext_refresh_tick connection"
 }
@@ -226,11 +246,11 @@ patch_file $rank_common {
     replace_once txt "  input rst;" \
         "  input rst;\n  input ext_refresh_tick;" \
         "rank_common ext_refresh_tick input"
-    force_replace txt "  assign refresh_tick = ext_refresh_tick;" \
-        "  assign refresh_tick = refresh_tick_lcl;" \
-        "rank_common internal refresh baseline"
+    force_replace txt "  assign refresh_tick = refresh_tick_lcl;" \
+        "  assign refresh_tick = ext_refresh_tick;" \
+        "rank_common external refresh override"
 }
 
 puts ""
 puts "Done. Generated BD exposes device_temp_0[11:0]."
-puts "Baseline mode: ext_refresh_tick is plumbed but MIG rank_common uses refresh_tick_lcl."
+puts "Retention mode: ext_refresh_tick drives MIG rank_common refresh_tick."
